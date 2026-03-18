@@ -117,7 +117,7 @@ public sealed class MethodDescription : MemberDescription
 	/// <param name="parameters">An array of parameters to pass. Should be the same length as Parameters</param>
 	public T InvokeWithReturn<T>( object targetObject, object[] parameters = null )
 	{
-		return (T)methodInfo.Invoke( targetObject, parameters );
+		return (T)Invoke( targetObject, parameters );
 	}
 
 	/// <summary>
