@@ -12,6 +12,33 @@ public static class Steam
 	/// </summary>
 	public static SteamId.AccountTypes CategorizeSteamId( SteamId steamid ) => steamid.AccountType;
 
+	#region Standalone_Steam
+	/// <summary>
+	/// <b>STANDALONE ONLY</b> <br/>
+	/// Checks if the user owns a specific DLC and if the DLC is installed
+	/// </summary>
+	/// <param name="appId">The App ID of the DLC to check.</param>
+	/// <returns>true if the user owns the DLC and it's currently installed, otherwise false.</returns>
+	public static bool IsDlcInstalled( int appId )
+	{
+		if ( !Application.IsStandalone) Log.Warning("[Steam] Called IsDlcInstalled on sbox appid!");
+		return NativeEngine.Steam.SteamApps().BIsDlcInstalled( appId );
+	}
+
+	/// <summary>
+	/// <b>STANDALONE ONLY</b> <br/>
+	/// Sets a Rich Presence key/value for the current user.
+	/// </summary>
+	/// <param name="pchKey">The rich presence 'key' to set.  This cannot be longer than specified in k_cchMaxRichPresenceKeyLength.</param>
+	/// <param name="pchValue">	The rich presence 'value' to associate with pchKey. This cannot be longer than specified in k_cchMaxRichPresenceValueLength. If this is set to an empty string ("") or NULL then the key is removed if it's set.</param>
+	/// <returns>true if the rich presence was set successfully.</returns>
+	public static bool SetRichPresence(string pchKey, string pchValue)
+	{
+		if ( !Application.IsStandalone ) Log.Warning("[Steam] Called SetRichPresence on sbox appid status will not change!");
+		return NativeEngine.Steam.SteamFriends().SetRichPresence( pchKey, pchValue );
+	}
+	#endregion
+
 	/// <summary>
 	/// The current user's SteamId
 	/// </summary>
