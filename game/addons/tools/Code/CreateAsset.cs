@@ -153,7 +153,14 @@ public static class CreateAsset
 				if ( File.Exists( destPath ) )
 					return;
 
-				File.Copy( sourceFile, destPath );
+				// I fucking hate default behaviour, little hacky but it works
+				if (defaultFile.Equals("component.cs"))
+				{
+					var data = File.ReadAllText(sourceFile);
+					data = data.Replace("MyComponent", $"{destName.Replace(".cs", "")}");
+					File.WriteAllText(destPath, data);
+				}
+				else File.Copy(sourceFile, destPath);
 				var asset = AssetSystem.RegisterFile( destPath );
 				MainAssetBrowser.Instance?.Local.OnAssetCreated( asset, destPath );
 			} );
