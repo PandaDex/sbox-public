@@ -4,9 +4,10 @@ using NLog.Targets;
 namespace Sandbox
 {
 	[Target( "GameLog" )]
-	internal sealed class GameLog : Target
+	public class GameLog : Target
 	{
 		private readonly object syncRoot = new object();
+		public static event EventHandler<LogEvent> logEv;
 
 		protected override void Write( LogEventInfo logEvent )
 		{
@@ -16,9 +17,29 @@ namespace Sandbox
 			}
 		}
 
+		private LogEvent ParseNlogToSbox( LogEventInfo log )
+		{
+			var logLevel = LogLevel.Info;
+			if ( log.Level == NLog.LogLevel.Info ) logLevel = LogLevel.Info;
+			if ( log.Level == NLog.LogLevel.Warn ) logLevel = LogLevel.Warn;
+			if ( log.Level == NLog.LogLevel.Error ) logLevel = LogLevel.Error;
+
+			return new LogEvent()
+			{
+				Level = logLevel,
+				Logger = log.LoggerName,
+				Message = log.FormattedMessage,
+				Stack = log.HasStackTrace ? log.StackTrace.ToString() : null,
+				Time = DateTime.Now
+			};
+
+		}
+
 		void ProtectedWrite( LogEventInfo logEvent )
 		{
 			string stacktrace = null;
+
+			logEv?.Invoke( this, ParseNlogToSbox(logEvent) );
 
 			if ( logEvent.Exception != null )
 			{
@@ -77,7 +98,7 @@ namespace Sandbox
 			}
 		}
 
-		private ConsoleColor GetConsoleColor( LogEvent e )
+		public static ConsoleColor GetConsoleColor( LogEvent e )
 		{
 			if ( e.Level == LogLevel.Trace ) return ConsoleColor.DarkGray;
 			if ( e.Level == LogLevel.Error ) return ConsoleColor.Red;
