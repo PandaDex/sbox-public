@@ -1,3 +1,5 @@
+# Please don't use this fork for any important work, as i can't guarantee that it will be stable. It's a temporary(I hope) repo so I can add things to the engine that will be needed for my standalone game. 
+
 <div align="center">
   <img src="https://sbox.game/img/sbox-logo-square.svg" width="80px" alt="s&box logo">
 
