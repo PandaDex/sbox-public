@@ -125,6 +125,8 @@ internal partial class GameInstanceDll : Engine.IGameInstanceDll
 	/// </summary>
 	public void ResetEnvironment()
 	{
+		using var scope = GlobalContext.GameScope();
+
 		Log.Trace( "Game Menu - ResetEnvironment" );
 
 
@@ -373,6 +375,8 @@ internal partial class GameInstanceDll : Engine.IGameInstanceDll
 
 		if ( gameInstance is null ) return;
 
+		using var scope = GlobalContext.GameScope();
+
 		ConVarSystem.SaveAll();
 
 		// Scope disconnect so we can shutdown game before disconnect and stop game objects from sending network destroy,
@@ -561,7 +565,7 @@ internal partial class GameInstanceDll : Engine.IGameInstanceDll
 			{
 				using ( IMenuDll.Current?.PushScope() )
 				{
-					IMenuSystem.Current?.Popup( "error", "Loading Error", $"There was an error when loading this game. {e.Message}" );
+					IModalSystem.Current?.Notice( "Loading Error", $"An error occurred when loading this game.\n\n{e.Message}", "error" );
 				}
 
 				Log.Warning( e, e.Message );
@@ -726,6 +730,8 @@ internal partial class GameInstanceDll : Engine.IGameInstanceDll
 			// Loading failed
 			if ( newInstance is not null )
 			{
+				using var _ = GlobalContext.GameScope();
+
 				newInstance.Close();
 				newInstance.Shutdown();
 				newInstance = default;
