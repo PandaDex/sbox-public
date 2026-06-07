@@ -2,7 +2,6 @@
 using Sandbox.DataModel;
 using Sandbox.Diagnostics;
 using Sandbox.Modals;
-using Sandbox.Network;
 
 public static class MenuHelpers
 {
@@ -16,18 +15,16 @@ public static class MenuHelpers
 	/// General-purpose method to play a game package. Handles quickplay, dedicated servers,
 	/// create-game modal, VR-only checks, default map fetching, and direct launch.
 	/// </summary>
-	public static async void PlayGame( Package package )
+	public static async void PlayGame( Package package, Package mapPackage = null )
 	{
 		Assert.True( HasAuthority, "You do not have authority to start a game, only the party owner can do that." );
 
 		// VR-only game but not in VR
-		var isVrOnly = package.GetMeta<ControlModeSettings>( "ControlModes" )?.IsVROnly ?? false;
-		if ( isVrOnly && !Application.IsVR )
+		if ( package.Info.IsVrOnly && !Application.IsVR )
 			return;
 
 		// QuickPlay: try to join an existing lobby first
-		var launchMode = package.GetMeta( "LaunchMode", "default" ).ToLower();
-		if ( launchMode == "quickplay" )
+		if ( package.Info.IsQuickPlay )
 		{
 			LoadingScreen.IsVisible = true;
 			LoadingScreen.Title = "Finding Game..";
@@ -35,11 +32,13 @@ public static class MenuHelpers
 
 			if ( await MenuUtility.TryJoinLobby( package.FullIdent ) )
 				return;
-		}
 
-		// Dedicated server only: show server list
-		if ( launchMode == "dedicatedserveronly" )
+			Log.Info( $"Couldn't join a lobby - making a game" );
+			LoadingScreen.IsVisible = false;
+		}
+		else if ( package.Info.IsDedicatedServerOnly )
 		{
+			// Dedicated server only: show server list
 			Game.Overlay.ShowServerList( new ServerListConfig( package.FullIdent ) );
 			return;
 		}
@@ -70,37 +69,49 @@ public static class MenuHelpers
 		LoadingScreen.Title = "Loading..";
 		LoadingScreen.Subtitle = "";
 
-		// Fetch the default map if one is configured
-		var defaultMap = package.GetValue( "DefaultMap", "" );
-		if ( !string.IsNullOrWhiteSpace( defaultMap ) )
+		if ( mapPackage is null )
 		{
-			var mapPackage = await Package.FetchAsync( defaultMap, false );
-			if ( mapPackage is not null )
+			// Fetch the default map if one is configured
+			var defaultMap = package.Info.DefaultMap;
+			if ( !string.IsNullOrWhiteSpace( defaultMap ) )
 			{
-				Log.Info( $"Default map configured ({defaultMap}), launching game with map." );
-				MenuUtility.OpenGameWithMap( package.FullIdent, mapPackage.FullIdent );
-				return;
+				Log.Info( $"DefaultMap configured, launching game with map: {defaultMap}" );
+				mapPackage = await Package.FetchAsync( defaultMap, false );
 			}
 		}
 
-		Log.Info( "No default map configured, launching game directly: " + package.FullIdent );
-
-		MenuUtility.OpenGame( package.FullIdent, true );
+		if ( mapPackage is not null )
+		{
+			MenuUtility.OpenGameWithMap( package.FullIdent, mapPackage.FullIdent );
+		}
+		else
+		{
+			MenuUtility.OpenGame( package.FullIdent, true );
+		}
 	}
 
 	static bool ShouldUseCreateGameModal( Package package )
 	{
-		if ( package.GetValue( "UseCreateGameModal", false ) )
+		if ( package.Info.UsesCreateGameModal )
 			return true;
 
-		var settings = package.GetMeta<List<GameSetting>>( "GameSettings", null );
-		if ( settings is not null && settings.Count > 0 )
+		if ( package.Info.HasGameSettings )
 			return true;
 
 		return false;
 	}
 
 	public static string SANDBOX_IDENT => "facepunch.sandbox";
+
+	/// <summary>
+	/// Whole days since <paramref name="time"/>, formatted compactly - e.g. "1d", "7d", "764d".
+	/// </summary>
+	public static string DaysAgo( System.DateTimeOffset time )
+	{
+		var days = (int)System.Math.Floor( (System.DateTimeOffset.UtcNow - time).TotalDays );
+		if ( days < 0 ) days = 0;
+		return $"{days}d";
+	}
 
 	public static MenuPanel OpenFriendMenu( Panel source, Friend friend )
 	{
@@ -151,9 +162,7 @@ public static class MenuHelpers
 			} );
 		}
 
-		var maxPlayers = package.GetMeta<int>( "MaxPlayers", 1 );
-
-		if ( multiplayerOverride || package.Tags.Contains( "multiplayer" ) || maxPlayers > 1 )
+		if ( multiplayerOverride || package.Tags.Contains( "multiplayer" ) || package.Info.MaxPlayers > 1 )
 		{
 			menu.AddSpacer();
 			menu.AddOption( "list", "View servers", () =>
@@ -164,7 +173,8 @@ public static class MenuHelpers
 
 		menu.AddSpacer();
 		menu.AddOption( "corporate_fare", $"View Creator", () => Game.Overlay.ShowOrganizationModal( package.Org ) );
-		menu.AddOption( "star", "Rate Game", () => Game.Overlay.ShowReviewModal( package ) );
+		menu.AddOption( "star", "Review Game", () => Game.Overlay.ShowReviewModal( package ) );
+		menu.AddOption( "flag", "Report Game", () => Game.Overlay.ShowReportModal( package.FullIdent ) );
 	}
 
 	static void OpenMapMenu( Panel source, Package package )
