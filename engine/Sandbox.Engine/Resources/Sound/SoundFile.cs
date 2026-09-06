@@ -16,7 +16,7 @@ public enum SoundFormat : byte
 public partial class SoundFile : Resource, IValid
 {
 	/// <summary>
-	/// Options for creating a sound from raw PCM data via <see cref="FromPcm(string, Span{byte}, PcmOptions)"/>.
+	/// Options for creating a sound from raw PCM data via <see cref="FromPcm(string, Span{byte}, PcmOptions?)"/>.
 	/// </summary>
 	public struct PcmOptions()
 	{
@@ -52,22 +52,23 @@ public partial class SoundFile : Resource, IValid
 	}
 
 	/// <summary>
-	/// Options for creating a sound from WAV or MP3 data via <see cref="FromWav(string, Span{byte}, LoadOptions)"/> or <see cref="FromMp3(string, Span{byte}, LoadOptions)"/>.
+	/// Options for creating a sound from WAV or MP3 data via <see cref="FromWav(string, Span{byte}, LoadOptions?)"/> or <see cref="FromMp3(string, Span{byte}, LoadOptions?)"/>.
+	/// Left alone, a WAV loops as its own "cue " chunk declares.
 	/// </summary>
 	public struct LoadOptions()
 	{
 		/// <summary>
-		/// Whether the sound should loop. Overridden by <see cref="LoopStart"/>/<see cref="LoopEnd"/> if set.
+		/// Loop the whole sound. Overridden by <see cref="LoopStart"/>/<see cref="LoopEnd"/> if set.
 		/// </summary>
 		public bool Loop { get; set; } = false;
 
 		/// <summary>
-		/// Start sample of the loop region. -1 means no loop.
+		/// Start sample of the loop region. -1 uses whatever the file declares.
 		/// </summary>
 		public int LoopStart { get; set; } = -1;
 
 		/// <summary>
-		/// End sample of the loop region. 0 means end of sound.
+		/// End sample of the loop region. 0 uses whatever the file declares.
 		/// </summary>
 		public int LoopEnd { get; set; } = 0;
 	}
@@ -75,12 +76,10 @@ public partial class SoundFile : Resource, IValid
 	internal CSfxTable native;
 	internal VSound_t sound;
 
-	internal static Dictionary<string, SoundFile> Loaded = new();
-
-	/// <summary>
-	/// Ran when the file is reloaded/recompiled, etc.
-	/// </summary>
-	public Action OnSoundReloaded { get; set; }
+	// Keyed by resource path ("sounds/foo.vsnd"). Wrappers are created here both by
+	// game code asking for a sound and by the resource system loading one - the key
+	// has to match either way, so normalize case and slashes.
+	internal static Dictionary<string, SoundFile> Loaded = new( StringComparer.OrdinalIgnoreCase );
 
 	/// <summary>
 	/// true if sound is loaded
@@ -143,7 +142,7 @@ public partial class SoundFile : Resource, IValid
 	{
 		Shutdown();
 
-		Loaded = new Dictionary<string, SoundFile>();
+		Loaded = new Dictionary<string, SoundFile>( StringComparer.OrdinalIgnoreCase );
 	}
 
 	internal static void Shutdown()
@@ -185,8 +184,6 @@ public partial class SoundFile : Resource, IValid
 	{
 		if ( native.IsValid )
 			sound = native.GetSound();
-
-		OnSoundReloaded?.Invoke();
 	}
 
 	/// <summary>
@@ -197,6 +194,8 @@ public partial class SoundFile : Resource, IValid
 	public static SoundFile Load( string filename )
 	{
 		ThreadSafe.AssertIsMainThread( "SoundFile.Load" );
+
+		filename = filename.Replace( '\\', '/' );
 
 		if ( !filename.EndsWith( ".vsnd", StringComparison.OrdinalIgnoreCase ) )
 			filename = System.IO.Path.ChangeExtension( filename, "vsnd" );
@@ -225,6 +224,9 @@ public partial class SoundFile : Resource, IValid
 	/// </summary>
 	internal static unsafe SoundFile Create( string filename, Span<byte> data, int channels, uint rate, int format, uint sampleCount, float duration, int loopStart, int loopEnd )
 	{
+		if ( Application.IsHeadless )
+			return null;
+
 		fixed ( byte* pData = data )
 		{
 			var sfx = g_pSoundSystem.CreateSound( filename, channels, (int)rate, format, (int)sampleCount, duration, loopStart, loopEnd, (IntPtr)pData, data.Length );
@@ -247,10 +249,12 @@ public partial class SoundFile : Resource, IValid
 	/// </summary>
 	/// <param name="filename">Sound name</param>
 	/// <param name="data">Raw interleaved PCM data</param>
-	/// <param name="options">PCM format and loop options</param>
-	public static unsafe SoundFile FromPcm( string filename, Span<byte> data, PcmOptions options = default )
+	/// <param name="pcmOptions">PCM format and loop options</param>
+	public static unsafe SoundFile FromPcm( string filename, Span<byte> data, PcmOptions? pcmOptions = null )
 	{
 		ThreadSafe.AssertIsMainThread( "SoundFile.FromPcm" );
+
+		var options = pcmOptions ?? new PcmOptions();
 
 		if ( !filename.EndsWith( ".vsnd", StringComparison.OrdinalIgnoreCase ) )
 			filename = System.IO.Path.ChangeExtension( filename, "vsnd" );
@@ -276,10 +280,12 @@ public partial class SoundFile : Resource, IValid
 	/// </summary>
 	/// <param name="filename">Sound name</param>
 	/// <param name="data">WAV file data</param>
-	/// <param name="options">Loop options</param>
-	public static unsafe SoundFile FromWav( string filename, Span<byte> data, LoadOptions options = default )
+	/// <param name="loadOptions">Loop options</param>
+	public static unsafe SoundFile FromWav( string filename, Span<byte> data, LoadOptions? loadOptions = null )
 	{
 		ThreadSafe.AssertIsMainThread( "SoundFile.FromWav" );
+
+		var options = loadOptions ?? new LoadOptions();
 
 		if ( !filename.EndsWith( ".vsnd", StringComparison.OrdinalIgnoreCase ) )
 			filename = System.IO.Path.ChangeExtension( filename, "vsnd" );
@@ -304,8 +310,10 @@ public partial class SoundFile : Resource, IValid
 			format = 3;
 		}
 
-		var loopStart = options.LoopStart >= 0 ? options.LoopStart : (options.Loop ? 0 : -1);
-		var loopEnd = options.LoopEnd;
+		// A WAV can declare its own loop with a "cue " chunk, which is what sound editors write.
+		// An explicit option still wins.
+		var loopStart = options.LoopStart >= 0 ? options.LoopStart : (options.Loop ? 0 : soundData.LoopStart);
+		var loopEnd = options.LoopEnd != 0 ? options.LoopEnd : soundData.LoopEnd;
 
 		return Create( filename, pcmData, soundData.Channels, soundData.SampleRate, format, soundData.SampleCount, soundData.Duration, loopStart, loopEnd );
 	}
@@ -315,10 +323,12 @@ public partial class SoundFile : Resource, IValid
 	/// </summary>
 	/// <param name="filename">Sound name</param>
 	/// <param name="data">MP3 file data</param>
-	/// <param name="options">Loop options</param>
-	public static unsafe SoundFile FromMp3( string filename, Span<byte> data, LoadOptions options = default )
+	/// <param name="loadOptions">Loop options</param>
+	public static unsafe SoundFile FromMp3( string filename, Span<byte> data, LoadOptions? loadOptions = null )
 	{
 		ThreadSafe.AssertIsMainThread( "SoundFile.FromMp3" );
+
+		var options = loadOptions ?? new LoadOptions();
 
 		if ( !filename.EndsWith( ".vsnd", StringComparison.OrdinalIgnoreCase ) )
 			filename = System.IO.Path.ChangeExtension( filename, "vsnd" );
@@ -354,10 +364,12 @@ public partial class SoundFile : Resource, IValid
 	/// </summary>
 	/// <param name="filename">Sound name</param>
 	/// <param name="data">OGG file data</param>
-	/// <param name="options">Loop options</param>
-	public static unsafe SoundFile FromOgg( string filename, Span<byte> data, LoadOptions options = default )
+	/// <param name="loadOptions">Loop options</param>
+	public static unsafe SoundFile FromOgg( string filename, Span<byte> data, LoadOptions? loadOptions = null )
 	{
 		ThreadSafe.AssertIsMainThread( "SoundFile.FromOgg" );
+
+		var options = loadOptions ?? new LoadOptions();
 
 		if ( !filename.EndsWith( ".vsnd", StringComparison.OrdinalIgnoreCase ) )
 			filename = System.IO.Path.ChangeExtension( filename, "vsnd" );
@@ -460,9 +472,17 @@ public partial class SoundFile : Resource, IValid
 	};
 
 	/// <summary>
-	/// Request decompressed audio samples.
+	/// Request decompressed audio samples. Multi-channel sounds are downmixed to mono.
 	/// </summary>
-	public async Task<short[]> GetSamplesAsync()
+	public Task<short[]> GetSamplesAsync() => GetSamplesAsync( false );
+
+	/// <summary>
+	/// Request decompressed audio samples. Stereo sounds keep both channels, interleaved
+	/// (L,R,L,R..). Sounds with any other channel count are downmixed to mono.
+	/// </summary>
+	public Task<short[]> GetSamplesInterleavedAsync() => GetSamplesAsync( true );
+
+	async Task<short[]> GetSamplesAsync( bool interleaved )
 	{
 		if ( native.IsNull )
 			return null;
@@ -481,6 +501,10 @@ public partial class SoundFile : Resource, IValid
 				return null;
 			}
 		}
+
+		// make sure the sound handle is valid so things like Channels work below
+		if ( !sound.IsValid )
+			sound = native.GetSound();
 
 		timeout = 0;
 
@@ -502,11 +526,11 @@ public partial class SoundFile : Resource, IValid
 			}
 
 
-			return GetSamples();
+			return GetSamples( interleaved );
 		}
 	}
 
-	unsafe short[] GetSamples()
+	unsafe short[] GetSamples( bool interleaved )
 	{
 		int sampleCount = native.GetSampleCount();
 		if ( sampleCount == 0 )
@@ -514,12 +538,22 @@ public partial class SoundFile : Resource, IValid
 			return null;
 		}
 
+		// the native interleaved path only preserves stereo - anything else comes back mono
+		if ( interleaved && Channels == 2 )
+		{
+			sampleCount *= 2;
+		}
+
 		// TODO: do something better than allocating an array each time?
 		var samples = new short[sampleCount];
 
 		fixed ( short* memory = &samples[0] )
 		{
-			if ( !native.GetSamples( (IntPtr)memory, (uint)sampleCount ) )
+			var ok = interleaved
+				? native.GetSamplesInterleaved( (IntPtr)memory, (uint)sampleCount )
+				: native.GetSamples( (IntPtr)memory, (uint)sampleCount );
+
+			if ( !ok )
 				return null;
 		}
 

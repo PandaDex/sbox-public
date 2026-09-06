@@ -2,7 +2,7 @@
 @inherits Panel
 @using Sandbox;
 @using Sandbox.UI;
-@using Menu;
+@using SboxMenu;
 @using System;
 @using Sandbox.Network
 
@@ -81,7 +81,7 @@
 
 	void SelectGame()
 	{
-		Game.Overlay.ShowPackageSelector("type:game sort:popular", (pkg) => {
+		Game.Overlay.ShowPackageSelector("type:game sort:rankweek", (pkg) => {
 			GamePackage = pkg;
 			StateHasChanged();
 		});

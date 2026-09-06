@@ -1,9 +1,9 @@
 ﻿namespace Editor.MeshEditor;
 
 /// <summary>
-/// Create stuff as long as it fits in a box, woah crazy.
+/// Draw a primitive by dragging its bounds in the scene.
 /// </summary>
-[Title( "Block" ), Icon( "view_in_ar" )]
+[Title( "Block" ), Icon( "meshtools/primitve_tools/block.png" )]
 public sealed class BlockEditor( PrimitiveTool tool ) : PrimitiveEditor( tool )
 {
 	PrimitiveBuilder _primitive = EditorTypeLibrary.Create<PrimitiveBuilder>( nameof( BlockPrimitive ) );
@@ -17,6 +17,7 @@ public sealed class BlockEditor( PrimitiveTool tool ) : PrimitiveEditor( tool )
 	bool _resizeDragging;
 	BBox _resizeBefore;
 	int _undoStartCount;
+	int _cameraFacing = -1;
 
 	static float TextSize => 22 * Gizmo.Settings.GizmoScale * Application.DpiScale;
 
@@ -85,6 +86,17 @@ public sealed class BlockEditor( PrimitiveTool tool ) : PrimitiveEditor( tool )
 				tr.Hit = true;
 				tr.Normal = plane.Normal;
 				tr.EndPosition = point;
+			}
+		}
+		else if ( tr.Component is MeshComponent mesh && mesh.Mesh is not null )
+		{
+			var face = mesh.Mesh.TriangleToFace( tr.Triangle );
+			if ( face.IsValid )
+			{
+				mesh.Mesh.ComputeFaceNormal( face, out var localNormal );
+				var center = mesh.WorldTransform.PointToWorld( mesh.Mesh.GetFaceCenter( face ) );
+				tr.Normal = mesh.WorldTransform.NormalToWorld( localNormal );
+				tr.EndPosition = new Plane( center, tr.Normal ).SnapToPlane( tr.EndPosition );
 			}
 		}
 
@@ -183,6 +195,14 @@ public sealed class BlockEditor( PrimitiveTool tool ) : PrimitiveEditor( tool )
 		{
 			BuildPreview();
 			_activeMaterial = Tool.ActiveMaterial;
+		}
+
+		// Some primitives orient themselves to the camera, so rebuild when the facing direction changes.
+		var facing = CameraFacing;
+		if ( _cameraFacing != facing )
+		{
+			_cameraFacing = facing;
+			BuildPreview();
 		}
 
 		if ( !Gizmo.Pressed.Any )
@@ -284,8 +304,10 @@ public sealed class BlockEditor( PrimitiveTool tool ) : PrimitiveEditor( tool )
 
 	static Vector3 GridSnap( Vector3 point, Vector3 normal )
 	{
-		var basis = Rotation.LookAt( normal );
-		return Gizmo.Snap( point * basis.Inverse, new Vector3( 0, 1, 1 ) ) * basis;
+		var n = normal.Normal.Abs();
+		var x = n.x >= n.y && n.x >= n.z;
+		var y = !x && n.y >= n.z;
+		return Gizmo.Snap( point, new Vector3( x ? 0 : 1, y ? 0 : 1, x || y ? 1 : 0 ) );
 	}
 
 	public override Widget CreateWidget()
@@ -297,6 +319,23 @@ public sealed class BlockEditor( PrimitiveTool tool ) : PrimitiveEditor( tool )
 	{
 		var mesh = Build();
 		_previewModel = mesh?.Rebuild();
+	}
+
+	/// <summary>
+	/// Which horizontal direction the camera is mostly looking down. Used to
+	/// detect when camera-aligned primitives need rebuilding.
+	/// </summary>
+	static int CameraFacing
+	{
+		get
+		{
+			var forward = Gizmo.Camera.Rotation.Forward;
+
+			if ( MathF.Abs( forward.y ) > MathF.Abs( forward.x ) )
+				return forward.y >= 0.0f ? 0 : 1;
+
+			return forward.x >= 0.0f ? 2 : 3;
+		}
 	}
 
 	void PushUndo( string name, BBox? before, BBox? after )
@@ -320,8 +359,7 @@ public sealed class BlockEditor( PrimitiveTool tool ) : PrimitiveEditor( tool )
 	private static IEnumerable<TypeDescription> GetBuilderTypes()
 	{
 		return EditorTypeLibrary.GetTypes<PrimitiveBuilder>()
-			.Where( x => !x.IsAbstract )
-			.OrderBy( x => x.Name );
+			.Where( x => !x.IsAbstract );
 	}
 
 	class BlockEditorWidget : ToolSidebarWidget
@@ -341,24 +379,22 @@ public sealed class BlockEditor( PrimitiveTool tool ) : PrimitiveEditor( tool )
 
 			{
 				var group = AddGroup( "Shape Type" );
-				var list = group.Add( new PrimitiveListView( this ) );
-				list.FixedWidth = 200;
-				list.SetItems( GetBuilderTypes() );
-				list.SelectItem( list.Items.FirstOrDefault( x => (x as TypeDescription).TargetType == _primitive?.GetType() ) );
-				list.ItemSelected = ( e ) => OnPrimitiveSelected( (e as TypeDescription).TargetType );
-				list.BuildLayout();
+				var picker = group.Add( new PrimitiveTypePicker( this, "Shape" ) );
+				picker.SetItems( GetBuilderTypes() );
+				picker.SelectType( _primitive?.GetType() );
+				picker.TypeSelected = type => OnPrimitiveSelected( type.TargetType );
 			}
 
 			_controlLayout = Layout.AddColumn();
 			BuildControlSheet();
-
-			Layout.AddStretchCell();
 		}
 
 		void OnPrimitiveSelected( Type type )
 		{
-			_editor._primitive = EditorTypeLibrary.Create<PrimitiveBuilder>( type );
+			_primitive = EditorTypeLibrary.Create<PrimitiveBuilder>( type );
+			_editor._primitive = _primitive;
 			_editor.BuildPreview();
+			BuildControlSheet();
 		}
 
 		void BuildControlSheet()
@@ -377,9 +413,17 @@ public sealed class BlockEditor( PrimitiveTool tool ) : PrimitiveEditor( tool )
 			var group = w.AddGroup( $"{title} Properties" );
 			var so = _primitive.GetSerialized();
 			so.OnPropertyChanged += ( e ) => _onEdited?.Invoke();
-			var sheet = new ControlSheet();
-			sheet.AddObject( so );
-			group.Add( sheet );
+
+			if ( _primitive.CreatePropertyEditor( so ) is { } editor )
+			{
+				group.Add( editor );
+			}
+			else
+			{
+				var sheet = new ControlSheet();
+				sheet.AddObject( so );
+				group.Add( sheet );
+			}
 		}
 
 		[EditorEvent.Frame]

@@ -21,14 +21,16 @@ public partial class Texture : Resource, IDisposable
 	internal object ParentObject;
 
 	/// <summary>
-	/// Has the native handle changed?
+	/// Bumped when the native handle is swapped, so the size may have changed. A version, not
+	/// a flag - one texture can be shared by many panels, and a flag is consumed by whichever
+	/// one happens to rebuild first, leaving the rest stale.
 	/// </summary>
-	internal bool IsDirty;
+	internal int DirtyVersion;
 
 	/// <summary>
 	/// Whether this texture is an error or invalid or not.
 	/// </summary>
-	public bool IsError => native.IsNull || !native.IsStrongHandleValid() || native.IsError();
+	public override bool IsError => native.IsNull || !native.IsStrongHandleValid() || native.IsError();
 
 	public override bool IsValid => native.IsValid;
 
@@ -86,12 +88,14 @@ public partial class Texture : Resource, IDisposable
 		// they release it, it'll be a hanging pointer!
 		native = texture.native.CopyStrongHandle();
 
+		IsAnimated = texture.IsAnimated;
+
 		UpdateSheetInfo();
 
 		gotdesc = false;
 		_desc = default;
 
-		IsDirty = true;
+		DirtyVersion++;
 	}
 
 	internal CTextureDesc Desc
@@ -135,6 +139,11 @@ public partial class Texture : Resource, IDisposable
 	/// Whether this texture has finished loading or not.
 	/// </summary>
 	public bool IsLoaded { get; internal set; } = true;
+
+	/// <summary>
+	/// True if this is a multi-frame animated image (GIF, animated WebP) driven by <see cref="Tick"/>.
+	/// </summary>
+	public bool IsAnimated { get; internal set; }
 
 	/// <summary>
 	/// Image format of this texture.
@@ -296,12 +305,23 @@ public partial class Texture : Resource, IDisposable
 
 	public bool HasAnimatedSequences { get; private set; }
 
+	ulong _markedUsedFrame;
+	int _markedUsedMipSize;
+
 	/// <summary>
 	/// Tells texture streaming this texture is being used.
 	/// This is usually automatic, but useful for bindless pipelines.
 	/// </summary>
 	public void MarkUsed( int requiredMipSize = 0 )
 	{
+		// Streaming only needs one touch per texture per frame, skip repeat calls
+		// unless they're asking for more detail than we already reported.
+		if ( _markedUsedFrame == Application.FrameCount && requiredMipSize <= _markedUsedMipSize )
+			return;
+
+		_markedUsedFrame = Application.FrameCount;
+		_markedUsedMipSize = requiredMipSize;
+
 		g_pRenderDevice.MarkTextureUsed( native, requiredMipSize );
 	}
 

@@ -8,6 +8,50 @@ internal partial class PanelRenderer
 	bool backdropGrabActive;
 	BlendMode pendingBlendMode = BlendMode.Normal;
 
+	internal static void MarkPresented( Texture texture, Panel panel, Matrix transform, in GPUScissor scissor, ref bool? panelIsOnScreen, bool? playbackPaused = null )
+	{
+		var player = texture.ParentObject as VideoPlayer;
+		if ( player is null )
+		{
+			if ( texture.IsAnimated ) texture.MarkUsed();
+			return;
+		}
+
+		var presented = playbackPaused switch
+		{
+			true => false,
+			false => true,
+			_ => panelIsOnScreen ??= OverlapsScissor( panel.Box.Rect, transform, scissor )
+		};
+
+		player.TrackPresentation( presented );
+		if ( presented ) texture.MarkUsed();
+	}
+
+	internal static bool OverlapsScissor( Rect rect, Matrix transform, in GPUScissor scissor )
+	{
+		var panelTl = transform.Transform( rect.TopLeft );
+		var panelTr = transform.Transform( rect.TopRight );
+		var panelBl = transform.Transform( rect.BottomLeft );
+		var panelBr = transform.Transform( rect.BottomRight );
+
+		for ( int i = 0; i < scissor.Count; i++ )
+		{
+			ref readonly var clip = ref scissor.Clips[i];
+			var tl = clip.Matrix.Transform( panelTl );
+			var tr = clip.Matrix.Transform( panelTr );
+			var bl = clip.Matrix.Transform( panelBl );
+			var br = clip.Matrix.Transform( panelBr );
+			var min = Vector2.Min( Vector2.Min( tl, tr ), Vector2.Min( bl, br ) );
+			var max = Vector2.Max( Vector2.Max( tl, tr ), Vector2.Max( bl, br ) );
+
+			if ( max.x <= clip.Rect.Left || max.y <= clip.Rect.Top || min.x >= clip.Rect.Right || min.y >= clip.Rect.Bottom )
+				return false;
+		}
+
+		return true;
+	}
+
 	void DrawPanel( Panel panel, CommandList cl )
 	{
 		if ( panel?.ComputedStyle == null || !panel.IsVisible )
@@ -25,7 +69,7 @@ internal partial class PanelRenderer
 		while ( i < children.Count )
 		{
 			var child = children[i];
-			if ( child?.ComputedStyle == null || !child.IsVisible ) { i++; continue; }
+			if ( child?.ComputedStyle == null || !child.IsVisible || child.IsFixed ) { i++; continue; }
 
 			switch ( child.CachedRenderMode )
 			{
@@ -65,7 +109,7 @@ internal partial class PanelRenderer
 	int CollectBatchedRun( List<Panel> children, int start, CommandList cl )
 	{
 		int groupZ = children[start].ComputedStyle.ZIndex ?? 0;
-		bool groupAbsolute = children[start].ComputedStyle?.Position == PositionMode.Absolute;
+		bool groupAbsolute = children[start].IsOutOfFlow;
 		int end = start;
 
 		int savedDepth = zDepth;
@@ -73,11 +117,11 @@ internal partial class PanelRenderer
 		while ( end < children.Count )
 		{
 			var c = children[end];
-			if ( c?.ComputedStyle == null || !c.IsVisible ) { end++; continue; }
+			if ( c?.ComputedStyle == null || !c.IsVisible || c.IsFixed ) { end++; continue; }
 			if ( c.CachedRenderMode != Panel.RenderMode.Batched ) break;
 
 			int z = c.ComputedStyle.ZIndex ?? 0;
-			bool isAbsolute = c.ComputedStyle?.Position == PositionMode.Absolute;
+			bool isAbsolute = c.IsOutOfFlow;
 
 			if ( z != groupZ || isAbsolute != groupAbsolute )
 			{
@@ -108,7 +152,7 @@ internal partial class PanelRenderer
 		// frame grab across consecutive siblings at the same z-depth.
 		if ( desc.Backdrops.Count > 0 )
 		{
-			if ( deferredInstances.Count > 0 && panel.ComputedStyle?.Position == PositionMode.Absolute )
+			if ( deferredInstances.Count > 0 && panel.IsOutOfFlow )
 			{
 				// Absolute-positioned panels overlap previous content;
 				// flush and re-grab so the backdrop sees the correct framebuffer
@@ -149,7 +193,7 @@ internal partial class PanelRenderer
 		for ( int i = 0; i < children.Count; i++ )
 		{
 			var child = children[i];
-			if ( child?.ComputedStyle == null || !child.IsVisible ) continue;
+			if ( child?.ComputedStyle == null || !child.IsVisible || child.IsFixed ) continue;
 
 			int childZ = child.ComputedStyle.ZIndex ?? 0;
 			zDepth = savedDepth + Math.Max( 0, childZ );
@@ -182,6 +226,7 @@ internal partial class PanelRenderer
 	{
 		var desc = panel.CachedDescriptors;
 		if ( desc == null ) return;
+		bool? panelIsOnScreen = null;
 
 		int scissorIndex = batcher.GetOrAddScissor( scissor );
 		int transformIndex = batcher.GetOrAddTransform( transform );
@@ -191,21 +236,28 @@ internal partial class PanelRenderer
 		{
 			ref var ri = ref instances[j];
 
-			// Skip boxes whose background texture hasn't streamed in yet
-			if ( ri.BackgroundImage is not null && ri.BackgroundImage.Index <= 0 )
-				continue;
-
 			var gpu = ri.GPU;
 
-			// Refresh bindless indices that may have changed since build
 			if ( ri.BackgroundImage is not null )
-				gpu.TextureIndex = ri.BackgroundImage.Index;
+			{
+				MarkPresented( ri.BackgroundImage, panel, transform, scissor, ref panelIsOnScreen, panel.ComputedStyle?.BackgroundPlaybackPaused );
+				gpu.TextureIndex = ri.BackgroundImage.Index > 0 ? ri.BackgroundImage.Index : Texture.Transparent.Index;
+			}
 			if ( ri.BorderImage is not null )
-				gpu.BorderImageIndex = ri.BorderImage.Index;
+			{
+				MarkPresented( ri.BorderImage, panel, transform, scissor, ref panelIsOnScreen );
+				gpu.BorderImageIndex = ri.BorderImage.Index > 0 ? ri.BorderImage.Index : Texture.Transparent.Index;
+			}
+
+			// Negative TextureIndex carries a gradient table index - resolved per frame,
+			// like scissors, because the table resets every frame.
+			if ( !ri.BackgroundGradient.ColorOffsets.IsDefaultOrEmpty )
+				gpu.TextureIndex = -batcher.GetOrAddGradient( in ri.BackgroundGradient ) - 1;
 
 			gpu.ScissorIndex = scissorIndex;
 			gpu.TransformIndex = transformIndex;
-			gpu.InverseScissorIndex = ri.HasInverseScissor ? batcher.GetOrAddScissor( ri.InverseScissor ) : -1;
+			gpu.InverseScissorIndex = ri.HasExtraScissor ? batcher.GetOrAddScissor( ri.ExtraScissor ) : -1;
+			gpu.ShapeIndex = batcher.GetOrAddShape( ri.BorderShapeData );
 
 			// Pack z-depth in the high bits, per-panel intra-pass in the low bits.
 			int sortPass = zDepth * 256 + (ri.Pass & 0xFF);
@@ -273,7 +325,7 @@ internal partial class PanelRenderer
 		if ( panel.HasPanelLayer )
 		{
 			transform = Matrix.Identity;
-			scissor.Matrix = Matrix.Identity;
+			scissor.ClearMatrices();
 		}
 
 		cl.Attributes.Set( "TransformMat", transform );
@@ -293,6 +345,7 @@ internal partial class PanelRenderer
 	{
 		var desc = panel.CachedDescriptors;
 		if ( desc == null ) return;
+		bool? panelIsOnScreen = null;
 
 		var customIdx = 0;
 
@@ -313,24 +366,31 @@ internal partial class PanelRenderer
 
 			ref var ri = ref instances[j];
 
-			// Skip instances whose texture hasn't streamed in yet
-			if ( ri.BackgroundImage is not null && ri.BackgroundImage.Index <= 0 )
-				continue;
-
 			// Blend mode change forces a flush so the shader combo is correct
 			if ( ri.BlendMode != pendingBlendMode && pendingInstances.Count > 0 )
 				FlushBatch( cl );
 
 			pendingBlendMode = ri.BlendMode;
 
-			// Refresh bindless indices that may have changed since build
 			var gpu = ri.GPU;
 			if ( ri.BackgroundImage is not null )
-				gpu.TextureIndex = ri.BackgroundImage.Index;
+			{
+				MarkPresented( ri.BackgroundImage, panel, transform, scissor, ref panelIsOnScreen, panel.ComputedStyle?.BackgroundPlaybackPaused );
+				gpu.TextureIndex = ri.BackgroundImage.Index > 0 ? ri.BackgroundImage.Index : Texture.Transparent.Index;
+			}
 			if ( ri.BorderImage is not null )
-				gpu.BorderImageIndex = ri.BorderImage.Index;
+			{
+				MarkPresented( ri.BorderImage, panel, transform, scissor, ref panelIsOnScreen );
+				gpu.BorderImageIndex = ri.BorderImage.Index > 0 ? ri.BorderImage.Index : Texture.Transparent.Index;
+			}
 
-			gpu.InverseScissorIndex = ri.HasInverseScissor ? batcher.GetOrAddScissor( ri.InverseScissor ) : -1;
+			// Negative TextureIndex carries a gradient table index - resolved per frame,
+			// like scissors, because the table resets every frame.
+			if ( !ri.BackgroundGradient.ColorOffsets.IsDefaultOrEmpty )
+				gpu.TextureIndex = -batcher.GetOrAddGradient( in ri.BackgroundGradient ) - 1;
+
+			gpu.InverseScissorIndex = ri.HasExtraScissor ? batcher.GetOrAddScissor( ri.ExtraScissor ) : -1;
+			gpu.ShapeIndex = batcher.GetOrAddShape( ri.BorderShapeData );
 
 			AddInstance( gpu, scissor, transform );
 		}
@@ -401,12 +461,11 @@ internal partial class PanelRenderer
 	{
 		float hue = (batchIndex * 137.508f) % 360f;
 		Color batchColor = new ColorHsv( hue, 0.7f, 0.9f, 0.85f );
-		var packed = batchColor.RawInt;
 
 		var span = CollectionsMarshal.AsSpan( pendingInstances );
 		for ( int i = 0; i < span.Length; i++ )
 		{
-			span[i].Color = packed;
+			span[i].Color = batchColor;
 			span[i].TextureIndex = 0;
 		}
 

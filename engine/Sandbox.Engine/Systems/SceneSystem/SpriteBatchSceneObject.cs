@@ -71,6 +71,7 @@ internal sealed class SpriteBatchSceneObject : SceneCustomObject
 		public Vector3 Velocity = Vector3.Zero;
 		public Vector4 BlendSheetUV;
 		public Vector2 Offset;
+		public uint CameraFade;     // Two halves: lower 16 bits near distance, upper 16 bits far distance
 		public SpriteData()
 		{
 
@@ -92,6 +93,14 @@ internal sealed class SpriteBatchSceneObject : SceneCustomObject
 			ushort fogPacked = (ushort)(fogStrength.Clamp( 0f, 1f ) * 65535f);
 			ushort alphaPacked = (ushort)(alphaCutout.Clamp( 0f, 1f ) * 65535f);
 			return (uint)(fogPacked | (alphaPacked << 16));
+		}
+
+		// Pack the two camera fade distances (world units) into a single uint as halves
+		internal static uint PackCameraFade( float near, float far )
+		{
+			uint nearPacked = BitConverter.HalfToUInt16Bits( (Half)MathF.Max( near, 0f ) );
+			uint farPacked = BitConverter.HalfToUInt16Bits( (Half)MathF.Max( far, 0f ) );
+			return nearPacked | (farPacked << 16);
 		}
 	}
 	struct SpriteVertex
@@ -179,6 +188,13 @@ internal sealed class SpriteBatchSceneObject : SceneCustomObject
 
 	SpriteData[] SpriteDataBuffer = null!;
 	bool SpriteDataBufferRented = false;
+
+
+	int _renderInstanceCount;
+	bool _renderIsSorted;
+	bool _renderFiltered;
+	bool _renderAdditive;
+	bool _renderOpaque;
 
 	public SpriteBatchSceneObject( Scene scene ) : base( scene.SceneWorld )
 	{
@@ -434,6 +450,7 @@ internal sealed class SpriteBatchSceneObject : SceneCustomObject
 						FogStrengthCutout = packedFogAndAlpha,
 						Lighting = packedExponent,
 						DepthFeather = c.DepthFeather,
+						CameraFade = SpriteData.PackCameraFade( c.CameraFadeNear, c.CameraFadeFar ),
 						SamplerIndex = SamplerState.GetBindlessIndex( sampler with { Filter = c.TextureFilter } ),
 						Offset = c.Pivot
 					};
@@ -536,9 +553,6 @@ internal sealed class SpriteBatchSceneObject : SceneCustomObject
 		_commandList.ResourceBarrierTransition( SpriteAtomicCounter, ResourceState.Common );
 		_commandList.ResourceBarrierTransition( (GpuBuffer)SpriteBufferOut, ResourceState.Common );
 
-		_commandList.Attributes.SetCombo( "D_BLEND", additive ? 1 : 0 );
-		_commandList.Attributes.SetCombo( "D_OPAQUE", opaque ? 1 : 0 );
-
 		if ( sorted && totalInstances >= 2 )
 		{
 			_commandList.ResourceBarrierTransition( (GpuBuffer)GPUDistanceBuffer, ResourceState.Common );
@@ -563,24 +577,42 @@ internal sealed class SpriteBatchSceneObject : SceneCustomObject
 		}
 
 		bool didSort = sorted && totalInstances >= 2;
-		_commandList.Attributes.Set( "IsSorted", didSort ? 1 : 0 );
-		_commandList.Attributes.Set( "SpriteCount", totalInstances );
-		_commandList.Attributes.Set( "Filtered", filtered );
-		_commandList.Attributes.Set( "Sprites", (GpuBuffer)SpriteBufferOut );
-		_commandList.Attributes.Set( "SortLUT", (GpuBuffer)GPUSortingBuffer );
-		_commandList.Attributes.Set( "Vertices", (GpuBuffer)VertexBuffer );
-		_commandList.Attributes.Set( "g_bNonDirectionalDiffuseLighting", true );
-		_commandList.DrawIndexedInstanced( (GpuBuffer)IndexBuffer, SpriteMaterial, totalInstances );
+
+		_renderInstanceCount = totalInstances;
+		_renderIsSorted = didSort;
+		_renderFiltered = filtered;
+		_renderAdditive = additive;
+		_renderOpaque = opaque;
 	}
 
 	public override void RenderSceneObject()
 	{
 		base.RenderSceneObject();
 
-		if ( _pendingSpriteCount == 0 )
+		if ( _pendingSpriteCount == 0 || !_commandList.Enabled )
 			return;
 
 		Graphics.Attributes.Set( "CameraPosition", Graphics.CameraPosition );
 		_commandList.ExecuteOnRenderThread();
+
+		var attributes = RenderAttributes.Pool.Get();
+		try
+		{
+			attributes.SetCombo( "D_BLEND", _renderAdditive ? 1 : 0 );
+			attributes.SetCombo( "D_OPAQUE", _renderOpaque ? 1 : 0 );
+			attributes.Set( "IsSorted", _renderIsSorted ? 1 : 0 );
+			attributes.Set( "SpriteCount", _renderInstanceCount );
+			attributes.Set( "Filtered", _renderFiltered );
+			attributes.Set( "Sprites", (GpuBuffer)SpriteBufferOut );
+			attributes.Set( "SortLUT", (GpuBuffer)GPUSortingBuffer );
+			attributes.Set( "Vertices", (GpuBuffer)VertexBuffer );
+			attributes.Set( "g_bNonDirectionalDiffuseLighting", true );
+
+			Graphics.DrawIndexedInstanced( (GpuBuffer)IndexBuffer, SpriteMaterial, _renderInstanceCount, attributes );
+		}
+		finally
+		{
+			RenderAttributes.Pool.Return( attributes );
+		}
 	}
 }

@@ -257,14 +257,14 @@ public partial class AssetList
 
 		if ( count > 0 )
 		{
-			if ( !asset?.IsProcedural ?? true )
+			if ( e.SelectedList.All( x => x.Asset is { CanOpenInEditor: true } ) )
 			{
-				if ( e.SelectedList.All( x => x.Asset is not null ) )
-				{
-					e.Menu.AddOption( count == 1 ? "Open in Editor" : $"Open {count} in Editor(s)", "edit",
-						() => e.SelectedList.ForEach( x => x.Asset.OpenInEditor() ) );
-				}
-				else if ( e.SelectedList.All( x => EditorUtility.IsCodeFile( x.FileInfo.FullName ) ) )
+				e.Menu.AddOption( count == 1 ? "Open in Editor" : $"Open {count} in Editor(s)", "edit",
+					() => e.SelectedList.ForEach( x => x.Asset.OpenInEditor() ) );
+			}
+			else if ( !asset?.IsProcedural ?? true )
+			{
+				if ( e.SelectedList.All( x => EditorUtility.IsCodeFile( x.FileInfo.FullName ) ) )
 				{
 					string editorName = CodeEditor.Title;
 					e.Menu.AddOption( count == 1 ? $"Open in {editorName}" : $"Open {count} in {editorName}", "edit",
@@ -344,8 +344,16 @@ public partial class AssetList
 		if ( meshes.Count == 0 )
 			return;
 
-		var label = meshes.Count == 1 ? "Create Model.." : $"Create {meshes.Count} Models..";
-		e.Menu.AddOption( label, "open_in_new", () => _ = new CreateModelFromMeshDialog( meshes ) );
+		if ( meshes.Count == 1 )
+		{
+			e.Menu.AddOption( "Create Model", "open_in_new", () => _ = new CreateModelFromMeshDialog( meshes ) );
+		}
+		else
+		{
+			var menu = e.Menu.AddMenu( "Create Models", "open_in_new" );
+			menu.AddOption( "Separate Models", "call_split", () => _ = new CreateModelFromMeshDialog( meshes ) );
+			menu.AddOption( "Single Model", "join_inner", () => _ = new CreateSingleModelFromMeshDialog( meshes ) );
+		}
 	}
 
 	static void RebuildTagMenu( Menu tag_menu, List<AssetEntry> entries )
@@ -596,7 +604,7 @@ public partial class AssetList
 
 			if ( count > 1 )
 			{
-				var assets = e.SelectedList.Select( x => x.Asset ).ToArray();
+				var assets = e.SelectedList.Select( x => x.Asset ).Where( x => x != null ).Distinct().ToArray();
 				var o = e.Menu.AddOption( $"Batch Publish ({assets.Length})..", "cloud_upload", () => BatchPublisher.FromAssetsWithEnablePublish( assets ) );
 			}
 		}

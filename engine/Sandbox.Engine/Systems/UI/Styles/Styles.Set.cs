@@ -55,6 +55,9 @@ namespace Sandbox.UI
 				case "position":
 					return SetPosition( value );
 
+				case "isolation":
+					return SetIsolation( value );
+
 				case "flex-direction":
 					return SetFlexDirction( value );
 
@@ -98,6 +101,18 @@ namespace Sandbox.UI
 
 				case "border-radius":
 					return SetBorderRadius( value );
+
+				case "border-shape":
+					return SetBorderShape( value );
+
+				case "border-top-left-radius":
+					return SetCornerRadius( value, v => BorderTopLeftRadius = v, v => BorderTopLeftRadiusV = v );
+				case "border-top-right-radius":
+					return SetCornerRadius( value, v => BorderTopRightRadius = v, v => BorderTopRightRadiusV = v );
+				case "border-bottom-right-radius":
+					return SetCornerRadius( value, v => BorderBottomRightRadius = v, v => BorderBottomRightRadiusV = v );
+				case "border-bottom-left-radius":
+					return SetCornerRadius( value, v => BorderBottomLeftRadius = v, v => BorderBottomLeftRadiusV = v );
 
 				case "border":
 					return SetBorder( value, w => BorderWidth = w, c => BorderColor = c );
@@ -173,6 +188,35 @@ namespace Sandbox.UI
 					AlignItems = GetAlign( value );
 					return AlignItems.HasValue;
 
+				case "justify-items":
+					JustifyItems = GetAlign( value );
+					return JustifyItems.HasValue;
+
+				case "justify-self":
+					JustifySelf = GetAlign( value );
+					return JustifySelf.HasValue;
+
+				case "place-items":
+					return SetPlace( value, v => AlignItems = v, v => JustifyItems = v );
+
+				case "place-self":
+					return SetPlace( value, v => AlignSelf = v, v => JustifySelf = v );
+
+				case "grid-auto-flow":
+					return SetGridAutoFlow( value );
+
+				case "grid-column":
+					return SetGridLine( value, v => GridColumnStart = v, v => GridColumnEnd = v );
+
+				case "grid-row":
+					return SetGridLine( value, v => GridRowStart = v, v => GridRowEnd = v );
+
+				case "grid-area":
+					return SetGridArea( value );
+
+				case "grid-template":
+					return SetGridTemplate( value );
+
 				case "text-align":
 					return SetTextAlign( value );
 
@@ -225,7 +269,7 @@ namespace Sandbox.UI
 					return SetBackground( value );
 
 				case "background-image":
-					return SetImage( value, SetBackgroundImageFromTexture, SetBackgroundSize, SetBackgroundRepeat, SetBackgroundAngle );
+					return SetImage( value, SetBackgroundImageFromTexture, SetBackgroundSize, SetBackgroundRepeat, SetBackgroundAngle, SetBackgroundGradient );
 
 				case "background-size":
 					return SetBackgroundSize( value );
@@ -235,6 +279,9 @@ namespace Sandbox.UI
 
 				case "background-repeat":
 					return SetBackgroundRepeat( value );
+
+				case "background-clip":
+					return SetBackgroundClip( value );
 
 				case "background-playback-state":
 					BackgroundPlaybackPaused = value == "paused";
@@ -490,50 +537,120 @@ namespace Sandbox.UI
 			return true;
 		}
 
+		/// <summary>
+		/// One to four lengths in CSS corner order (top-left, top-right, bottom-right, bottom-left), missing ones
+		/// repeating like margin. Null when the text isn't lengths.
+		/// </summary>
+		static Length[] ReadCornerLengths( string value )
+		{
+			var p = new Parse( value ).SkipWhitespaceAndNewlines();
+			var read = new List<Length>( 4 );
+
+			while ( !p.IsEnd && read.Count < 4 && p.TryReadLength( out var l ) )
+			{
+				read.Add( l );
+				p = p.SkipWhitespaceAndNewlines();
+			}
+
+			if ( read.Count == 0 || !p.IsEnd )
+				return null;
+
+			return read.Count switch
+			{
+				1 => [read[0], read[0], read[0], read[0]],
+				2 => [read[0], read[1], read[0], read[1]],
+				3 => [read[0], read[1], read[2], read[1]],
+				_ => [read[0], read[1], read[2], read[3]],
+			};
+		}
+
+		/// <summary>
+		/// border-radius: horizontal radii, then optionally "/" and the vertical radii for elliptical corners.
+		/// </summary>
 		bool SetBorderRadius( string value )
 		{
-			var p = new Parse( value );
+			var slash = value.IndexOf( '/' );
+			var h = ReadCornerLengths( slash < 0 ? value : value.Substring( 0, slash ) );
+			if ( h == null ) return false;
+
+			var v = h;
+			if ( slash >= 0 )
+			{
+				v = ReadCornerLengths( value.Substring( slash + 1 ) );
+				if ( v == null ) return false;
+			}
+
+			BorderTopLeftRadius = h[0];
+			BorderTopRightRadius = h[1];
+			BorderBottomRightRadius = h[2];
+			BorderBottomLeftRadius = h[3];
+			BorderTopLeftRadiusV = v[0];
+			BorderTopRightRadiusV = v[1];
+			BorderBottomRightRadiusV = v[2];
+			BorderBottomLeftRadiusV = v[3];
+			return true;
+		}
+
+		/// <summary>
+		/// A single corner: one length for a circle, two for an ellipse (horizontal then vertical).
+		/// </summary>
+		static bool SetCornerRadius( string value, Action<Length?> setH, Action<Length?> setV )
+		{
+			var p = new Parse( value ).SkipWhitespaceAndNewlines();
+			if ( !p.TryReadLength( out var h ) ) return false;
 
 			p = p.SkipWhitespaceAndNewlines();
+			var v = h;
+			if ( !p.IsEnd && !p.TryReadLength( out v ) ) return false;
+			if ( !p.SkipWhitespaceAndNewlines().IsEnd ) return false;
 
-			if ( p.IsEnd )
-				return false;
-
-			if ( !p.TryReadLength( out var a ) )
-				return false;
-
-			if ( p.IsEnd || !p.TryReadLength( out var b ) )
-			{
-				BorderTopLeftRadius = a;
-				BorderTopRightRadius = a;
-				BorderBottomRightRadius = a;
-				BorderBottomLeftRadius = a;
-				return true;
-			}
-
-			if ( p.IsEnd || !p.TryReadLength( out var c ) )
-			{
-				BorderTopLeftRadius = a;
-				BorderTopRightRadius = b;
-				BorderBottomRightRadius = a;
-				BorderBottomLeftRadius = b;
-				return true;
-			}
-
-			if ( p.IsEnd || !p.TryReadLength( out var d ) )
-			{
-				BorderTopLeftRadius = a;
-				BorderTopRightRadius = b;
-				BorderBottomRightRadius = c;
-				BorderBottomLeftRadius = b;
-				return true;
-			}
-
-			BorderTopLeftRadius = a;
-			BorderTopRightRadius = b;
-			BorderBottomRightRadius = c;
-			BorderBottomLeftRadius = d;
+			setH( h );
+			setV( v );
 			return true;
+		}
+
+		bool SetBorderShape( string value )
+		{
+			value = value?.Trim();
+			if ( string.Equals( value, "none", StringComparison.OrdinalIgnoreCase ) ) { BorderShape = UI.BorderShape.None; return true; }
+			if ( value != null && value.StartsWith( "circle(", StringComparison.OrdinalIgnoreCase ) && value[^1] == ')' )
+				return SetCircleBorderShape( value.Substring( 7, value.Length - 8 ) );
+			if ( value == null || !value.StartsWith( "polygon(", StringComparison.OrdinalIgnoreCase ) || value[^1] != ')' ) return false;
+
+			var contents = value.Substring( 8, value.Length - 9 );
+			var points = new List<BorderShapePoint>();
+			int start = 0, depth = 0;
+			for ( int i = 0; i <= contents.Length; i++ )
+			{
+				if ( i < contents.Length ) { if ( contents[i] == '(' ) depth++; else if ( contents[i] == ')' ) depth--; if ( contents[i] != ',' || depth != 0 ) continue; }
+				if ( depth != 0 || points.Count == UI.BorderShape.MaxPoints ) return false;
+				var p = new Parse( contents.Substring( start, i - start ) ).SkipWhitespaceAndNewlines();
+				if ( !p.TryReadLength( out var x ) ) return false; p = p.SkipWhitespaceAndNewlines();
+				if ( !p.TryReadLength( out var y ) ) return false; p = p.SkipWhitespaceAndNewlines();
+				if ( !p.IsEnd ) return false;
+				points.Add( new BorderShapePoint( x, y ) ); start = i + 1;
+			}
+			if ( points.Count < 3 ) return false;
+			BorderShape = new UI.BorderShape( points.ToArray() ); return true;
+		}
+
+		bool SetCircleBorderShape( string contents )
+		{
+			var p = new Parse( contents ).SkipWhitespaceAndNewlines();
+			Length? radius = null; Length cx = Length.Percent( 50 ).Value; Length cy = cx;
+			if ( p.IsEnd ) { BorderShape = new UI.BorderShape( radius, cx, cy ); return true; }
+			if ( !p.Is( "at", 0, true ) )
+			{
+				if ( !p.TryReadLength( out var r ) || (r.Unit != LengthUnit.Expression && r.Value < 0) ) return false;
+				radius = r; p = p.SkipWhitespaceAndNewlines();
+				if ( p.IsEnd ) { BorderShape = new UI.BorderShape( radius, cx, cy ); return true; }
+			}
+			if ( !p.Is( "at", 0, true ) ) return false;
+			p.Pointer += 2; if ( !p.IsEnd && !p.IsWhitespace && !p.IsNewline ) return false; p = p.SkipWhitespaceAndNewlines();
+			if ( !p.TryReadLength( out cx ) ) return false; p = p.SkipWhitespaceAndNewlines();
+			if ( !p.TryReadLength( out cy ) ) return false; p = p.SkipWhitespaceAndNewlines();
+			if ( !p.IsEnd ) return false;
+			BorderShape = new UI.BorderShape( radius, cx, cy ); return true;
 		}
 
 		bool SetBorderWidth( string value )
@@ -658,8 +775,8 @@ namespace Sandbox.UI
 				else if ( word == "initial" )
 				{
 					// "initial" expands to 0 1 auto
-					FlexShrink ??= 0;
-					FlexGrow ??= 1;
+					FlexGrow ??= 0;
+					FlexShrink ??= 1;
 					FlexBasis = Length.Auto;
 
 					return true;
@@ -1153,10 +1270,149 @@ namespace Sandbox.UI
 				case "contents":
 					Display = DisplayMode.Contents;
 					return true;
+				case "block":
+				case "flow-root":
+					Display = DisplayMode.Block;
+					return true;
+				case "grid":
+					Display = DisplayMode.Grid;
+					return true;
+				case "inline":
+					Display = DisplayMode.Inline;
+					return true;
 				default:
 					Log.Warning( $"Unhandled display property: {value}" );
 					return false;
 			}
+		}
+
+		bool SetGridAutoFlow( string value )
+		{
+			var row = false;
+			var column = false;
+			var dense = false;
+
+			foreach ( var part in value.Split( ' ', StringSplitOptions.RemoveEmptyEntries ) )
+			{
+				switch ( part )
+				{
+					case "row": row = true; break;
+					case "column": column = true; break;
+					case "dense": dense = true; break;
+					default:
+						Log.Warning( $"Unhandled grid-auto-flow property: {value}" );
+						return false;
+				}
+			}
+
+			if ( row && column )
+			{
+				Log.Warning( $"Unhandled grid-auto-flow property: {value}" );
+				return false;
+			}
+
+			GridAutoFlow = column ? (dense ? UI.GridAutoFlow.ColumnDense : UI.GridAutoFlow.Column) : (dense ? UI.GridAutoFlow.RowDense : UI.GridAutoFlow.Row);
+			return true;
+		}
+
+		/// <summary>
+		/// <c>place-items</c> / <c>place-self</c>: align value, then an optional justify value.
+		/// </summary>
+		bool SetPlace( string value, Action<Align?> setAlign, Action<Align?> setJustify )
+		{
+			var parts = value.Split( ' ', StringSplitOptions.RemoveEmptyEntries );
+			if ( parts.Length is 0 or > 2 ) return false;
+
+			var align = GetAlign( parts[0] );
+			var justify = parts.Length == 2 ? GetAlign( parts[1] ) : align;
+			if ( !align.HasValue || !justify.HasValue ) return false;
+
+			setAlign( align );
+			setJustify( justify );
+			return true;
+		}
+
+		/// <summary>
+		/// <c>grid-column</c> / <c>grid-row</c>: <c>start [ / end ]</c>. A lone named line applies to both
+		/// edges, any other lone value leaves the end <c>auto</c> (css-grid-1 §8.4).
+		/// </summary>
+		bool SetGridLine( string value, Action<string> setStart, Action<string> setEnd )
+		{
+			var parts = value.Split( '/' );
+			if ( parts.Length > 2 ) return false;
+
+			var start = parts[0].Trim();
+			if ( start.Length == 0 ) return false;
+
+			string end;
+			if ( parts.Length == 2 )
+			{
+				end = parts[1].Trim();
+				if ( end.Length == 0 ) return false;
+			}
+			else
+			{
+				end = IsCustomIdent( start ) ? start : "auto";
+			}
+
+			setStart( start );
+			setEnd( end );
+			return true;
+		}
+
+		/// <summary>
+		/// <c>grid-area</c>: <c>row-start / column-start / row-end / column-end</c>, omitted values copying
+		/// the matching named line or falling back to <c>auto</c>.
+		/// </summary>
+		bool SetGridArea( string value )
+		{
+			var parts = value.Split( '/' );
+			if ( parts.Length is 0 or > 4 ) return false;
+
+			for ( int i = 0; i < parts.Length; i++ )
+			{
+				parts[i] = parts[i].Trim();
+				if ( parts[i].Length == 0 ) return false;
+			}
+
+			var rowStart = parts[0];
+			var columnStart = parts.Length > 1 ? parts[1] : (IsCustomIdent( rowStart ) ? rowStart : "auto");
+			var rowEnd = parts.Length > 2 ? parts[2] : (IsCustomIdent( rowStart ) ? rowStart : "auto");
+			var columnEnd = parts.Length > 3 ? parts[3] : (IsCustomIdent( columnStart ) ? columnStart : "auto");
+
+			GridRowStart = rowStart;
+			GridColumnStart = columnStart;
+			GridRowEnd = rowEnd;
+			GridColumnEnd = columnEnd;
+			return true;
+		}
+
+		/// <summary>
+		/// <c>grid-template</c>: <c>none</c> or <c>rows / columns</c>. Area strings aren't supported.
+		/// </summary>
+		bool SetGridTemplate( string value )
+		{
+			if ( value == "none" )
+			{
+				GridTemplateRows = "none";
+				GridTemplateColumns = "none";
+				return true;
+			}
+
+			var parts = value.Split( '/' );
+			if ( parts.Length != 2 ) return false;
+
+			GridTemplateRows = parts[0].Trim();
+			GridTemplateColumns = parts[1].Trim();
+			return true;
+		}
+
+		static bool IsCustomIdent( string s )
+		{
+			if ( s.Length == 0 || char.IsDigit( s[0] ) || s[0] == '-' ) return false;
+			if ( s is "auto" or "span" ) return false;
+			foreach ( var c in s ) if ( !(char.IsLetterOrDigit( c ) || c == '-' || c == '_') ) return false;
+			return true;
 		}
 
 		bool SetPointerEvents( string value )
@@ -1188,11 +1444,31 @@ namespace Sandbox.UI
 				case "absolute":
 					Position = PositionMode.Absolute;
 					return true;
+				case "fixed":
+					Position = PositionMode.Fixed;
+					return true;
 				case "relative":
 					Position = PositionMode.Relative;
 					return true;
 				default:
 					Log.Warning( $"Unhandled position property: {value}" );
+					return false;
+			}
+		}
+
+
+		bool SetIsolation( string value )
+		{
+			switch ( value )
+			{
+				case "auto":
+					Isolation = UI.Isolation.Auto;
+					return true;
+				case "isolate":
+					Isolation = UI.Isolation.Isolate;
+					return true;
+				default:
+					Log.Warning( $"Unhandled isolation property: {value}" );
 					return false;
 			}
 		}
@@ -1278,9 +1554,11 @@ namespace Sandbox.UI
 				case "flex-start":
 				case "start":
 				case "left":
+					JustifyContent = UI.Justify.FlexStart;
+					return true;
 				case "normal":
 				case "stretch":
-					JustifyContent = UI.Justify.FlexStart;
+					JustifyContent = UI.Justify.Stretch;
 					return true;
 				case "center":
 					JustifyContent = UI.Justify.Center;
@@ -1453,6 +1731,12 @@ namespace Sandbox.UI
 				}
 
 				var subValue = p.ReadWord( null, true );
+
+				if ( subValue == "none" )
+				{
+					TextDecorationLine = UI.TextDecoration.None;
+					continue;
+				}
 
 				var textDecoration = GetTextDecorationFromValue( subValue );
 				if ( textDecoration != UI.TextDecoration.None )
@@ -1673,14 +1957,17 @@ namespace Sandbox.UI
 				int stack = 1;
 				var wordStart = p;
 
-				while ( !p.IsEnd && stack > 0 )
+				// Test before stepping, so an empty "url()" closes on the very first
+				// character instead of running off the end.
+				while ( !p.IsEnd )
 				{
-					p.Pointer++;
 					if ( p.Current == '(' ) stack++;
-					if ( p.Current == ')' ) stack--;
+					else if ( p.Current == ')' && --stack == 0 ) break;
+
+					p.Pointer++;
 				}
 
-				if ( p.IsEnd ) throw new System.Exception( "Expected ) after " + tokenName );
+				if ( stack > 0 ) throw new System.Exception( "Expected ) after " + tokenName );
 
 				result = wordStart.Read( p.Pointer - wordStart.Pointer );
 				return true;
@@ -1695,11 +1982,10 @@ namespace Sandbox.UI
 			 * We support a version of the "background" syntax that consists only of
 			 * the final background layer; we also omit:
 			 * - background-attachment
-			 * - background-clip
 			 * - background-origin
 			 * 
 			 * so our syntax can be defined as:
-			 * background: <bg-image> || <bg-position> [ / <bg-size> ]? || <repeat-style> || <'background-color'>
+			 * background: <bg-image> || <bg-position> [ / <bg-size> ]? || <repeat-style> || <box> || <'background-color'>
 			 * https://drafts.csswg.org/css-backgrounds/#the-background
 			 */
 
@@ -1708,6 +1994,8 @@ namespace Sandbox.UI
 			// by a less specific rule, instead of leaving them showing through.
 			_backgroundImage = NoImage;
 			BackgroundColor = Color.Transparent;
+			BackgroundGradient = default;
+			BackgroundClip = UI.BackgroundClip.BorderBox;
 
 			var p = new Parse( value );
 
@@ -1748,6 +2036,8 @@ namespace Sandbox.UI
 						//
 						SetBackgroundRepeat( part );
 					}
+					// <box> - we have no background-origin, so a box value only sets the clip
+					else if ( SetBackgroundClip( part ) ) continue;
 					else
 					{
 						// A bare colour token (named colour, #hex, etc.)
@@ -1777,7 +2067,7 @@ namespace Sandbox.UI
 				if ( bgColor.HasValue )
 					BackgroundColor = bgColor.Value;
 				else
-					SetImage( bgSource, SetBackgroundImageFromTexture, SetBackgroundSize, SetBackgroundRepeat, SetBackgroundAngle );
+					SetImage( bgSource, SetBackgroundImageFromTexture, SetBackgroundSize, SetBackgroundRepeat, SetBackgroundAngle, SetBackgroundGradient );
 			}
 
 			//
@@ -1905,7 +2195,8 @@ namespace Sandbox.UI
 		/// <param name="setSize">Optional</param>
 		/// <param name="setRepeat">Optional</param>
 		/// <param name="setAngle">Optional</param>
-		bool SetImage( string value, Func<Lazy<Texture>, bool> setImage = null, Func<string, bool> setSize = null, Func<string, bool> setRepeat = null, Func<float, bool> setAngle = null )
+		/// <param name="setGradient">Optional - surfaces that can evaluate gradients in the shader. Called with default to clear.</param>
+		bool SetImage( string value, Func<Lazy<Texture>, bool> setImage = null, Func<string, bool> setSize = null, Func<string, bool> setRepeat = null, Func<float, bool> setAngle = null, Func<GradientInfo, bool> setGradient = null )
 		{
 			var p = new Parse( value );
 			p = p.SkipWhitespaceAndNewlines();
@@ -1914,6 +2205,7 @@ namespace Sandbox.UI
 
 			if ( p.Is( "none", 0, true ) )
 			{
+				setGradient?.Invoke( default );
 				setImage( NoImage );
 				return true;
 			}
@@ -1921,15 +2213,30 @@ namespace Sandbox.UI
 			if ( GetTokenValueUnderParenthesis( p, "url", out string url ) )
 			{
 				url = url.Trim( ' ', '"', '\'' );
-				setImage( new Lazy<Texture>( () =>
+				setGradient?.Invoke( default );
+
+				// An empty url() is a binding whose source hasn't loaded yet - no image,
+				// same as "none", rather than a lookup for a blank path.
+				setImage( string.IsNullOrWhiteSpace( url ) ? NoImage : new Lazy<Texture>( () =>
 				{
 					return Texture.Load( url ) ?? Texture.Invalid;
 				} ) );
+
 				return true;
 			}
 
+			// Gradients evaluate in the pixel shader wherever the surface supports it. The
+			// baked textures below are only for the surfaces that don't - masks and
+			// border-image - and go away once those move to the shader too.
 			if ( GetTokenValueUnderParenthesis( p, "linear-gradient", out string gradient ) )
 			{
+				if ( setGradient != null )
+				{
+					setImage?.Invoke( NoImage );
+					setGradient( TryParseLinearGradientInfo( gradient, out var gradientInfo ) ? gradientInfo : default );
+					return true;
+				}
+
 #pragma warning disable CA2000 // Dispose objects before losing scope
 				// Ownership of gradientTexture is transferred to the Lazy<Texture> returned via setImage
 				var gradientTexture = GenerateLinearGradientTexture( gradient, out var angle );
@@ -1943,6 +2250,13 @@ namespace Sandbox.UI
 
 			if ( GetTokenValueUnderParenthesis( p, "radial-gradient", out string radialGradient ) )
 			{
+				if ( setGradient != null )
+				{
+					setImage?.Invoke( NoImage );
+					setGradient( TryParseRadialGradientInfo( radialGradient, out var radialInfo ) ? radialInfo : default );
+					return true;
+				}
+
 #pragma warning disable CA2000 // Dispose objects before losing scope
 				// Ownership of gradientTexture is transferred to the Lazy<Texture> returned via setImage
 				var gradientTexture = GenerateRadialGradientTexture( radialGradient );
@@ -1955,6 +2269,13 @@ namespace Sandbox.UI
 
 			if ( GetTokenValueUnderParenthesis( p, "conic-gradient", out string conicGradient ) )
 			{
+				if ( setGradient != null )
+				{
+					setImage?.Invoke( NoImage );
+					setGradient( TryParseConicGradientInfo( conicGradient, out var conicInfo ) ? conicInfo : default );
+					return true;
+				}
+
 #pragma warning disable CA2000 // Dispose objects before losing scope
 				// Ownership of gradientTexture is transferred to the Lazy<Texture> returned via setImage
 				var gradientTexture = GenerateConicGradientTexture( conicGradient );
@@ -2203,6 +2524,12 @@ namespace Sandbox.UI
 			}
 		}
 
+		bool SetBackgroundGradient( GradientInfo gradient )
+		{
+			BackgroundGradient = gradient;
+			return true;
+		}
+
 		bool SetBackgroundImageFromTexture( Lazy<Texture> texture )
 		{
 			if ( texture == null )
@@ -2232,6 +2559,13 @@ namespace Sandbox.UI
 			return true;
 		}
 
+		/// <summary>
+		/// A gradient angle, converted from CSS to the convention both gradient paths use.
+		/// CSS measures clockwise from "to top", we measure clockwise from "to bottom", so
+		/// the two are mirrored: 0deg (up) becomes 180, 180deg (down) becomes 0, and 90deg
+		/// (right) stays put. Result is radians, wrapped to [0, 2pi) - the background-angle
+		/// style the baked path writes through rejects negatives.
+		/// </summary>
 		bool TryParseAngle( string value, out float outAngle )
 		{
 			outAngle = 0.0f;
@@ -2240,11 +2574,9 @@ namespace Sandbox.UI
 
 			if ( !angle.HasValue ) return false;
 
-			var angleDeg = angle.Value;
+			var degrees = (180f - angle.Value.Value).UnsignedMod( 360f );
 
-			// The shader expects radians.
-			var angleRad = angleDeg.Value.DegreeToRadian();
-			outAngle = angleRad;
+			outAngle = degrees.DegreeToRadian();
 
 			return true;
 		}
@@ -2362,6 +2694,15 @@ namespace Sandbox.UI
 			return false;
 		}
 
+		bool SetBackgroundClip( string value )
+		{
+			if ( !Enum.TryParse<BackgroundClip>( value.Replace( "-", "" ), true, out var clip ) )
+				return false;
+
+			BackgroundClip = clip;
+			return true;
+		}
+
 		bool SetBackgroundRepeat( string value )
 		{
 			switch ( value )
@@ -2395,6 +2736,9 @@ namespace Sandbox.UI
 		{
 			TextGradient = new();
 			TextGradient.GradientType = GradientInfo.GradientTypes.Linear;
+
+			// CSS degrees, and an omitted angle means "to bottom".
+			TextGradient.Angle = 180f;
 
 			var p = new Parse( gradient );
 			p.SkipWhitespaceAndNewlines();
@@ -2784,14 +3128,14 @@ namespace Sandbox.UI
 
 			//
 			// https://www.w3.org/TR/css-images-3/#linear-gradient-syntax
-			// top/bottom are flipped in order to match css spec, our coordinate systems differ
-			// from browser implementations
+			// Straight CSS degrees - clockwise from "to top". Callers convert to whatever
+			// their own renderer wants.
 			//
 			Dictionary<string, float> directions = new Dictionary<string, float>()
 			{
-				{ "bottom", 0 },
+				{ "top", 0 },
 				{ "right", 90 },
-				{ "top", 180 },
+				{ "bottom", 180 },
 				{ "left", 270 }
 			};
 
@@ -2828,9 +3172,7 @@ namespace Sandbox.UI
 					var unit = "deg";
 					if ( p.IsLetter ) unit = p.ReadUntilWhitespaceOrNewlineOrEnd( "," );
 
-					// CSS angles - +x is assumed to be 0 degrees, whereas we would assume +y is 0 degrees,
-					// so we add 90deg here in order to match the CSS spec.
-					return StyleHelpers.RotationDegrees( num, unit ) + 90f;
+					return StyleHelpers.RotationDegrees( num, unit );
 				}
 			}
 

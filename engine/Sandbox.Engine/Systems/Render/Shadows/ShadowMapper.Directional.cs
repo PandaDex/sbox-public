@@ -16,7 +16,7 @@ unsafe struct GPUDirectionalLight
 	public fixed int ShadowMapIndex[4];
 	public uint CascadeCount;
 	public float InverseShadowMapSize;
-	public float Padding;
+	public uint ShadowMaskTextureIndex;
 	public bool Enabled;
 	public fixed float CascadeHardness[4];
 	public Vector4 CascadeSphere0;
@@ -288,6 +288,14 @@ internal partial class ShadowMapper
 		gpuShadowData.Color = new Vector4( light.LightColor, light.FogStrength );
 		gpuShadowData.Direction = new Vector4( -light.WorldDirection, 0 );
 
+		// 3D skybox is fully static with baked light, keep the directional light for shading but skip shadow cascades
+		if ( view.GetRenderAttributesPtr().GetBoolValue( "IsSkybox", false ) )
+		{
+			gpuShadowData.CascadeCount = 0;
+			GPUDirectionalLightData = gpuShadowData;
+			return;
+		}
+
 		DirectionalShadowMemorySize = 0;
 
 		// native stuff does this WorldDirection shit, we can just do light.Rotation if stuff is rotated properly
@@ -315,7 +323,7 @@ internal partial class ShadowMapper
 			frustum.InitOrthoCamera( cascade.Origin, cascade.Angles, cascade.Near, cascade.Far, cascade.Width, cascade.Height );
 
 			// Render shadow view
-			CSceneSystem.AddShadowView( CascadeNames[i], view, frustum, new( 0, 0, shadowmapSize, shadowmapSize ), rt.DepthTarget.native, 0, SceneObjectFlags.None, excludeFlags, ShadowDepthBias, ShadowSlopeScale, i > 0 ? exclusionFrustum : default );
+			CSceneSystem.AddShadowView( CascadeNames[i], view, frustum, new( 0, 0, shadowmapSize, shadowmapSize ), rt.DepthTarget.native, 0, SceneObjectFlags.None, excludeFlags, ShadowDepthBias, ShadowSlopeScale, i > 0 ? exclusionFrustum : default, default );
 
 			// Cache an exclusion frustum sized to the largest square inscribed in the cascade's bounding sphere.
 			var size = cascade.SphereRadius / MathF.Sqrt( 2.0f );
@@ -368,6 +376,16 @@ internal partial class ShadowMapper
 
 		gpuShadowData.CascadeCount = (uint)numCascades;
 		gpuShadowData.InverseShadowMapSize = 1.0f / shadowmapSize;
+
+		// Ensure we have our screenspace texture index before we actually render them if we use it, so it's already ready when we composite.
+		gpuShadowData.ShadowMaskTextureIndex = 0;
+		if ( ContactShadowsEnabled && light.ContactShadows )
+		{
+			var mask = light.GetShadowMask( view );
+			if ( mask is not null )
+				gpuShadowData.ShadowMaskTextureIndex = (uint)mask.Index;
+		}
+
 		GPUDirectionalLightData = gpuShadowData;
 	}
 

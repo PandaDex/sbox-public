@@ -52,19 +52,16 @@ internal partial class GameInstanceDll : Engine.IGameInstanceDll
 				FileSystem.Mounted.Mount( EngineFileSystem.LibraryContent );
 			}
 
-			if ( Application.IsStandalone )
+			FileSystem.Mounted.CreateAndMount( EngineFileSystem.Root, "/core/" );
+
+			if ( !Application.IsStandalone )
 			{
-				// In standalone, we don't ship code - only assets
-				FileSystem.Mounted.CreateAndMount( EngineFileSystem.Addons, $"/base/Assets" );
-				FileSystem.Mounted.CreateAndMount( EngineFileSystem.Root, "/core/" );
+				FileSystem.Mounted.CreateAndMount( EngineFileSystem.Root, "/addons/citizen/Assets/" );
 			}
-			else
-			{
-				FileSystem.Mounted.CreateAndMount( EngineFileSystem.Addons, "/base/Assets/" );
-				FileSystem.Mounted.CreateAndMount( EngineFileSystem.Addons, "/base/code/" );
-				FileSystem.Mounted.CreateAndMount( EngineFileSystem.Root, "/core/" );
-				FileSystem.Mounted.CreateAndMount( EngineFileSystem.Addons, "/citizen/Assets/" );
-			}
+
+			// The editor's UI assets - stylesheets and the like - are visible while editing
+			if ( Application.IsEditor )
+				FileSystem.Mounted.CreateAndMount( EngineFileSystem.Root, "/addons/editor/assets/" );
 		}
 
 		PackageLoader?.Dispose();
@@ -75,12 +72,15 @@ internal partial class GameInstanceDll : Engine.IGameInstanceDll
 		ConVarSystem.AddAssembly( Game.GameAssembly, "game" );
 	}
 
-	public Task Initialize()
+	public async Task Initialize()
 	{
 		ResetEnvironment();
 		Networking.StartThread();
 
-		return Task.CompletedTask;
+		if ( !Application.IsStandalone )
+		{
+			await Mounting.MountConfig.Mount();
+		}
 	}
 
 	public void Exiting()
@@ -142,6 +142,8 @@ internal partial class GameInstanceDll : Engine.IGameInstanceDll
 			PackageLoader.OnAfterHotload = OnAfterHotload;
 		}
 
+		ResourceLoader.Clear();
+
 		if ( DidMountNetworkedFiles )
 		{
 			EngineFileSystem.Mounted.UnMount( NetworkedLargeFiles.Files );
@@ -166,6 +168,9 @@ internal partial class GameInstanceDll : Engine.IGameInstanceDll
 
 		FileWatchers.ForEach( w => w.Dispose() );
 		FileWatchers.Clear();
+
+		NetworkedFileSystem?.Dispose();
+		NetworkedFileSystem = null;
 
 		Screen.UpdateFromEngine();
 
@@ -740,6 +745,8 @@ internal partial class GameInstanceDll : Engine.IGameInstanceDll
 			//
 			if ( !Application.IsEditor )
 			{
+				Game.IsPlaying = true;
+
 				LoadingScreen.Title = flags.Contains( GameLoadingFlags.Host ) ? "Starting Game" : "Joining Game..";
 				await Task.Yield();
 

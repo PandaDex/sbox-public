@@ -169,6 +169,11 @@ public abstract partial class Connection
 		}
 	}
 
+	/// <summary>
+	/// Can this connection send ActionGraph / Doo scripts?
+	/// </summary>
+	internal bool CanSendScripts => IsHost;
+
 	public virtual float Latency => 0;
 
 	/// <summary>
@@ -176,7 +181,9 @@ public abstract partial class Connection
 	/// </summary>
 	/// <seealso cref="DisplayName"/>
 	[ActionGraphInclude]
-	public string Name => Info?.Name ?? "Unknown Player";
+	public string Name => Preferences.StreamerMode
+		? Utility.Steam.GetAnonymousName( SteamId )
+		: Info?.Name ?? "Unknown Player";
 
 	[ActionGraphInclude]
 	public virtual float Time => 0.0f;

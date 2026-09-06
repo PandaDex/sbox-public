@@ -57,6 +57,12 @@ internal static class Utility
 		{
 			foreach ( var envVar in environmentVariables )
 			{
+				if ( envVar.Value is null )
+				{
+					process.StartInfo.EnvironmentVariables.Remove( envVar.Key );
+					continue;
+				}
+
 				process.StartInfo.EnvironmentVariables[envVar.Key] = envVar.Value;
 			}
 		}
@@ -209,9 +215,11 @@ internal static class Utility
 			return true;
 		}
 
+		// SboxBuild describes the native build, so changing it changes the binaries.
 		var touchesNative = changedFiles.Any( f =>
 			f.StartsWith( "src/", StringComparison.OrdinalIgnoreCase ) ||
-			f.StartsWith( "engine/Definitions/", StringComparison.OrdinalIgnoreCase ) );
+			f.StartsWith( "engine/Definitions/", StringComparison.OrdinalIgnoreCase ) ||
+			f.StartsWith( "engine/Tools/SboxBuild/", StringComparison.OrdinalIgnoreCase ) );
 
 		if ( touchesNative )
 		{
@@ -251,5 +259,19 @@ internal static class Utility
 		}
 
 		return $"{size:0.##} {units[unitIndex]}";
+	}
+
+	/// <summary>
+	/// Exports an environment variable to later steps of the same GitHub Actions job by appending it to the
+	/// file referenced by GITHUB_ENV. No-op when not running under Actions (GITHUB_ENV unset), so locally the
+	/// value is simply never seen by subsequent steps.
+	/// </summary>
+	public static void SetGitHubEnv( string name, string value )
+	{
+		var githubEnv = Environment.GetEnvironmentVariable( "GITHUB_ENV" );
+		if ( string.IsNullOrEmpty( githubEnv ) )
+			return;
+
+		File.AppendAllText( githubEnv, $"{name}={value}{Environment.NewLine}" );
 	}
 }

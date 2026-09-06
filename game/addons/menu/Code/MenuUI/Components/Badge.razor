@@ -1,4 +1,4 @@
-@namespace Menu
+@namespace SboxMenu
 @inherits Sandbox.UI.Panel
 @using Sandbox.UI
 
@@ -25,4 +25,6 @@
     [Parameter] public string Text { get; set; }
     
     string StyleClass { get; set; }
+
+	protected override int BuildHash() => System.HashCode.Combine( Text, Icon, Number, StyleClass );
 }

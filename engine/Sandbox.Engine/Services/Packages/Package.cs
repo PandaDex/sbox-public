@@ -20,10 +20,30 @@ public partial class Package
 	/// </summary>
 	public Organization Org { get; set; }
 
+	string _fullIdent;
+	string _fullIdentOrg;
+	string _fullIdentIdent;
+
 	/// <summary>
-	/// Full unique identity of this package.
+	/// Full unique identity of this package. Cached against the org and ident it was
+	/// built from, so it's only formatted when they change.
 	/// </summary>
-	public string FullIdent => FormatIdent( Org.Ident, Ident, local: !IsRemote );
+	public string FullIdent
+	{
+		get
+		{
+			var org = Org.Ident;
+
+			if ( _fullIdent is null || _fullIdentOrg != org || _fullIdentIdent != Ident )
+			{
+				_fullIdent = FormatIdent( org, Ident, local: !IsRemote );
+				_fullIdentOrg = org;
+				_fullIdentIdent = Ident;
+			}
+
+			return _fullIdent;
+		}
+	}
 
 	/// <summary>
 	/// Unique identity of this package within its <see cref="Org">organization.</see>.
@@ -503,12 +523,28 @@ public partial class Package
 		public long Seconds { get; set; }
 	}
 
-	internal virtual IEnumerable<string> EnumeratePackageReferences()
+	internal virtual IEnumerable<string> EnumerateInstallDependencies()
 	{
 		if ( PackageReferences is not null )
 		{
 			foreach ( var p in PackageReferences )
 				yield return p;
+		}
+	}
+
+	internal virtual IEnumerable<string> EnumeratePackageReferences()
+	{
+		foreach ( var package in EnumerateInstallDependencies() )
+			yield return package;
+
+		// A targeted addon/asset depends on its parent game - except maps
+		// Bit of a shitty edge case, but we don't want a map to load a second,
+		// DIFFERENT game when loading it in another game like Sandbox 
+		if ( !string.Equals( TypeName, "map", StringComparison.OrdinalIgnoreCase ) )
+		{
+			var parent = Info.ParentPackage;
+			if ( TryParseIdent( parent, out _ ) )
+				yield return parent;
 		}
 	}
 

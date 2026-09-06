@@ -67,8 +67,10 @@ native accessor g_pRenderDevice
 
 	bool Present( SwapChainHandle_t chain );
 	void Flush();
+	void FlushPipelineCache();
 	void ForceFlushGPU( SwapChainHandle_t hSwapChain );
 	bool CanRenderToSwapChain( SwapChainHandle_t chain );
+	void SetSwapChainIsMainWindow( SwapChainHandle_t chain, bool bIsMainWindow );
 
 	bool IsUsing32BitDepthBuffer();
 
@@ -79,8 +81,6 @@ native accessor g_pRenderDevice
 		return Vector2D( (float)nBBWidth, (float)nBBHeight );
 	}
 
-	RenderShaderHandle_t CompileAndCreateShader( RenderShaderType nType, string pProgram, uint nBufLen, string pShaderVersion, string pDebugName );
-
 	int GetTextureLastUsed( ITexture hTexture );
 
 	void UnThrottleTextureStreamingForNFrames( uint nNumberOfFramesForUnthrottledTextureLoading );
@@ -89,6 +89,7 @@ native accessor g_pRenderDevice
 
 	RenderDeviceAPI_t GetRenderDeviceAPI();
 
+	[nogc]
 	void MarkTextureUsed( ITexture texture, int nRequiredMipSize );
 
 	bool IsTextureRenderTarget( ITexture texture );

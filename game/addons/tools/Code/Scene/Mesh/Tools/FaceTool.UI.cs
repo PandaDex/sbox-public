@@ -74,6 +74,9 @@ partial class FaceTool
 				_meshTool.CreateMoveModeButtons( row );
 			}
 
+			this.AddPivotGroup( tool );
+			this.AddPivotButtons( tool, _faces.Length > 0 );
+
 			{
 				var group = AddGroup( "Operations", collapsible: true );
 
@@ -81,10 +84,10 @@ partial class FaceTool
 					var row = new Widget { Layout = Layout.Row() };
 					row.Layout.Spacing = 4;
 
-					CreateButton( "Extract Faces", "content_cut", "mesh.extract-faces", ExtractFaces, _faces.Length > 0, row.Layout );
-					CreateButton( "Detach Faces", "call_split", "mesh.detach-faces", DetachFaces, _faces.Length > 0, row.Layout );
-					CreateButton( "Combine Faces", "join_full", "mesh.combine-faces", CombineFaces, _faces.Length > 0, row.Layout );
-					CreateButton( "Collapse Faces", "unfold_less", "mesh.collapse", Collapse, _faces.Length > 0, row.Layout );
+					CreateButton( "Extract Faces", "meshtools/face_tool/extract_faces.png", "mesh.extract-faces", ExtractFaces, _faces.Length > 0, row.Layout );
+					CreateButton( "Detach Faces", "meshtools/face_tool/detach_faces.png", "mesh.detach-faces", DetachFaces, _faces.Length > 0, row.Layout );
+					CreateButton( "Combine Faces", "meshtools/face_tool/combine_faces.png", "mesh.combine-faces", CombineFaces, _faces.Length > 0, row.Layout );
+					CreateButton( "Collapse Faces", "meshtools/face_tool/collapse_faces.png", "mesh.collapse", Collapse, _faces.Length > 0, row.Layout );
 
 					row.Layout.AddStretchCell();
 
@@ -95,9 +98,9 @@ partial class FaceTool
 					var row = new Widget { Layout = Layout.Row() };
 					row.Layout.Spacing = 4;
 
-					CreateButton( "Remove Bad Faces", "delete_sweep", "mesh.remove-bad-faces", RemoveBadFaces, _faces.Length > 0, row.Layout );
-					CreateButton( "Flip All Faces", "flip", "mesh.flip-all-faces", FlipAllFaces, _faces.Length > 0, row.Layout );
-					CreateButton( "Thicken Faces", "layers", "mesh.thicken-faces", ThickenFaces, _faces.Length > 0, row.Layout );
+					CreateButton( "Remove Bad Faces", "meshtools/face_tool/remove_bad_faces.png", "mesh.remove-bad-faces", RemoveBadFaces, _faces.Length > 0, row.Layout );
+					CreateButton( "Flip All Faces", "meshtools/face_tool/flip_all_faces.png", "mesh.flip-all-faces", FlipAllFaces, _faces.Length > 0, row.Layout );
+					CreateButton( "Thicken Faces", "meshtools/face_tool/thicken_faces.png", "mesh.thicken-faces", ThickenFaces, _faces.Length > 0, row.Layout );
 
 					row.Layout.AddStretchCell();
 
@@ -108,7 +111,7 @@ partial class FaceTool
 					var row = new Widget { Layout = Layout.Row() };
 					row.Layout.Spacing = 4;
 
-					CreateButton( "Slice", "grid_4x4", "mesh.quad-slice", QuadSlice, _faces.Length > 0, row.Layout );
+					CreateButton( "Slice", "meshtools/face_tool/slice.png", "mesh.quad-slice", QuadSlice, _faces.Length > 0, row.Layout );
 
 					var control = ControlWidget.Create( tool.GetSerialized().GetProperty( nameof( NumCuts ) ) );
 					control.FixedHeight = Theme.ControlHeight;
@@ -125,20 +128,35 @@ partial class FaceTool
 				var grid = Layout.Row();
 				grid.Spacing = 4;
 
-				CreateButton( "Fast Texture Tool", "texture", "mesh.fast-texture-tool", OpenFastTextureTool, true, grid );
-				CreateButton( "Edge Cut Tool", "polyline", "mesh.edge-cut-tool", OpenEdgeCutTool, true, grid );
-				CreateButton( "Mirror Tool", "flip", "mesh.mirror-tool", OpenMirrorTool, _faces.Length > 0, grid );
-				CreateButton( "Clipping Tool", "content_cut", "mesh.open-clipping-tool", OpenClippingTool, _faces.Length > 0, grid );
-				CreateButton( "Bridge", "device_hub", "mesh.bridge-tool", OpenBridgeTool, CanBridgeFaces(), grid );
+				CreateButton( "Fast Texture Tool", "meshtools/texture_tool_buttons/fast_texture_tool.png", "mesh.fast-texture-tool", OpenFastTextureTool, true, grid );
+				CreateButton( "Edge Cut Tool", "meshtools/face_tool/edge_cut_tool.png", "mesh.edge-cut-tool", OpenEdgeCutTool, true, grid );
+				CreateButton( "Mirror Tool", "meshtools/face_tool/mirror_tool.png", "mesh.mirror-tool", OpenMirrorTool, _faces.Length > 0, grid );
+				CreateButton( "Clipping Tool", "meshtools/face_tool/clipping_tool.png", "mesh.open-clipping-tool", OpenClippingTool, _faces.Length > 0, grid );
+				CreateButton( "Bridge", "meshtools/face_tool/bridge_1.png", "mesh.bridge-tool", OpenBridgeTool, CanBridgeFaces(), grid );
+				CreateButton( "Inset", "meshtools/face_tool/insert_face.png", "mesh.inset-tool", OpenInsetTool, _faces.Length > 0, grid );
 
 				grid.AddStretchCell();
 
 				group.Add( grid );
+
+				var row2 = Layout.Row();
+				row2.Spacing = 4;
+
+				CreateButton( "Find / Replace Material", "find_replace", "mesh.find-replace-material-tool", OpenFindReplaceMaterialTool, true, row2 );
+
+				row2.AddStretchCell();
+
+				group.Add( row2 );
 			}
 
 			BuildTextureUI( so, target );
 
 			Layout.AddStretchCell();
+
+			{
+				var group = AddGroup( "Visualization" );
+				group.Add( ControlSheetRow.Create( tool.GetSerialized().GetProperty( nameof( ShowSelectionBounds ) ) ) );
+			}
 
 			{
 				var group = AddGroup( "Filtered Selection [Alt + Double Click]", collapsible: true );
@@ -210,6 +228,17 @@ partial class FaceTool
 			_meshTool.CurrentTool = tool;
 		}
 
+		[Shortcut( "mesh.inset-tool", "Shift+I", typeof( SceneViewWidget ) )]
+		void OpenInsetTool()
+		{
+			if ( _faces.Length == 0 )
+				return;
+
+			var tool = new InsetTool( _faces );
+			tool.Manager = _meshTool.Manager;
+			_meshTool.CurrentTool = tool;
+		}
+
 		[Shortcut( "mesh.select-all", "CTRL+A", typeof( SceneViewWidget ) )]
 		private void SelectAll()
 		{
@@ -221,13 +250,84 @@ partial class FaceTool
 
 			foreach ( var faceGroup in _faceGroups )
 			{
-				var faces = faceGroup.Key.Mesh.FaceHandles;
+				var mesh = faceGroup.Key.Mesh;
 
-				foreach ( var face in faces )
+				foreach ( var face in mesh.FaceHandles )
 				{
+					if ( mesh.IsFaceHidden( face ) )
+						continue;
+
 					selection.Add( new MeshFace( faceGroup.Key, face ) );
 				}
 			}
+		}
+
+		[Shortcut( "mesh.hide-faces", "H", typeof( SceneViewWidget ) )]
+		private void HideFaces()
+		{
+			using var scope = SceneEditorSession.Scope();
+
+			var faces = _faces.Where( x => x.IsValid() ).ToArray();
+			if ( faces.Length == 0 )
+				return;
+
+			HideFaces( faces );
+
+			SceneEditorSession.Active.UndoSystem.Insert( "Hide Faces",
+				() => UnhideFaces( faces ),
+				() => HideFaces( faces ) );
+		}
+
+		[Shortcut( "mesh.unhide-faces", "U", typeof( SceneViewWidget ) )]
+		private void UnhideFaces()
+		{
+			using var scope = SceneEditorSession.Scope();
+
+			var faces = SceneEditorSession.Active.Scene.GetAllComponents<MeshComponent>()
+				.Where( x => x.Mesh?.HasHiddenFaces is true )
+				.SelectMany( x => x.Mesh.FaceHandles
+					.Where( h => x.Mesh.IsFaceHidden( h ) )
+					.Select( h => new MeshFace( x, h ) ) )
+				.ToArray();
+
+			if ( faces.Length == 0 )
+				return;
+
+			UnhideFaces( faces );
+
+			SceneEditorSession.Active.UndoSystem.Insert( "Unhide All Faces",
+				() => HideFaces( faces ),
+				() => UnhideFaces( faces ) );
+		}
+
+		private static void HideFaces( MeshFace[] faces )
+		{
+			var selection = SceneEditorSession.Active.Selection;
+			var components = new HashSet<MeshComponent>();
+
+			foreach ( var face in faces.Where( x => x.IsValid() ) )
+			{
+				face.Component.Mesh.SetFaceHidden( face.Handle, true );
+				selection.Remove( face );
+				components.Add( face.Component );
+			}
+
+			foreach ( var component in components )
+				component.RebuildMesh();
+		}
+
+		private static void UnhideFaces( MeshFace[] faces )
+		{
+			var components = new HashSet<MeshComponent>();
+
+			foreach ( var face in faces.Where( x => x.IsValid() ) )
+			{
+				face.Component.Mesh.SetFaceHidden( face.Handle, false );
+				components.Add( face.Component );
+			}
+
+			foreach ( var component in components )
+				component.RebuildMesh();
 		}
 
 		[Shortcut( "mesh.open-clipping-tool", "SHIFT+X", typeof( SceneViewWidget ) )]
@@ -930,6 +1030,95 @@ partial class FaceTool
 			}
 
 			SelectionFrameUtil.FramePoints( points );
+		}
+
+		[Shortcut( "mesh.select-loop", "L", typeof( SceneViewWidget ) )]
+		private void SelectLoop()
+		{
+			var faces = _faces
+				.Where( x => x.IsValid() )
+				.ToArray();
+
+			var loopFaces = faces.ToHashSet();
+			var hasDirection = false;
+
+			foreach ( var group in faces.GroupBy( x => x.Component ) )
+			{
+				var component = group.Key;
+				var mesh = component.Mesh;
+				var selectedHandles = group
+					.Select( x => x.Handle )
+					.ToHashSet();
+
+				foreach ( var face in group )
+				{
+					foreach ( var edge in mesh.GetFaceEdges( face.Handle ) )
+					{
+						mesh.GetFacesConnectedToEdge( edge, out var faceA, out var faceB );
+
+						var neighbor = faceA == face.Handle ? faceB : faceA;
+						if ( !neighbor.IsValid || !selectedHandles.Contains( neighbor ) )
+							continue;
+
+						hasDirection = true;
+						ExtendFaceLoop( component, face.Handle, neighbor, loopFaces );
+					}
+				}
+			}
+
+			if ( !hasDirection )
+				return;
+
+			using var scope = SceneEditorSession.Scope();
+			using var undoScope = SceneEditorSession.Active.UndoScope( "Select Face Loop" ).Push();
+
+			var selection = SceneEditorSession.Active.Selection;
+			selection.Clear();
+
+			foreach ( var face in loopFaces )
+				selection.Add( face );
+		}
+
+		private static void ExtendFaceLoop( MeshComponent component, FaceHandle current, FaceHandle previous, HashSet<MeshFace> loopFaces )
+		{
+			var mesh = component.Mesh;
+
+			while ( current.IsValid )
+			{
+				var edges = mesh.GetFaceEdges( current );
+				if ( edges.Length != 4 )
+					return;
+
+				var incomingEdgeIndex = -1;
+
+				for ( var i = 0; i < edges.Length; i++ )
+				{
+					mesh.GetFacesConnectedToEdge( edges[i], out var faceA, out var faceB );
+
+					if ( (faceA == current && faceB == previous) ||
+						(faceB == current && faceA == previous) )
+					{
+						incomingEdgeIndex = i;
+						break;
+					}
+				}
+
+				if ( incomingEdgeIndex < 0 )
+					return;
+
+				var oppositeEdge = edges[(incomingEdgeIndex + 2) % edges.Length];
+				mesh.GetFacesConnectedToEdge( oppositeEdge, out var oppositeFaceA, out var oppositeFaceB );
+
+				var next = oppositeFaceA == current ? oppositeFaceB : oppositeFaceA;
+				if ( !next.IsValid || mesh.IsFaceHidden( next ) )
+					return;
+
+				if ( !loopFaces.Add( new MeshFace( component, next ) ) )
+					return;
+
+				previous = current;
+				current = next;
+			}
 		}
 	}
 }

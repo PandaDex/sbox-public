@@ -1,4 +1,5 @@
-﻿using Sandbox.Network;
+﻿using Sandbox.Engine;
+using Sandbox.Network;
 using Sandbox.Utility;
 using System.IO;
 using System.Text.Json.Nodes;
@@ -159,7 +160,14 @@ public partial class SceneNetworkSystem : GameNetworkSystem
 			var networkObject = BatchSpawnList.FirstOrDefault();
 
 			if ( !(networkObject.GameObject?.IsDestroyed ?? true) )
+			{
 				Broadcast( networkObject.GetCreateMessage() );
+
+				foreach ( var recipient in GetFilteredConnections() )
+				{
+					networkObject.MarkCreateMessageSent( recipient );
+				}
+			}
 
 			BatchSpawnList.Clear();
 			return;
@@ -177,9 +185,23 @@ public partial class SceneNetworkSystem : GameNetworkSystem
 		}
 
 		msg.CreateMsgs = list.ToArray();
-		BatchSpawnList.Clear();
 
 		Broadcast( msg );
+
+		var recipients = GetFilteredConnections().ToList();
+
+		foreach ( var networkObject in BatchSpawnList )
+		{
+			if ( networkObject.GameObject?.IsDestroyed ?? true )
+				continue;
+
+			foreach ( var recipient in recipients )
+			{
+				networkObject.MarkCreateMessageSent( recipient );
+			}
+		}
+
+		BatchSpawnList.Clear();
 	}
 
 	/// <summary>
@@ -201,6 +223,11 @@ public partial class SceneNetworkSystem : GameNetworkSystem
 		}
 
 		Broadcast( networkObject.GetCreateMessage() );
+
+		foreach ( var recipient in GetFilteredConnections() )
+		{
+			networkObject.MarkCreateMessageSent( recipient );
+		}
 	}
 
 	/// <summary>
@@ -244,6 +271,11 @@ public partial class SceneNetworkSystem : GameNetworkSystem
 		// Let them know we have now loaded this scene.
 		var loadedMsg = new SceneLoadedMsg { SceneId = msg.SceneId, Id = msg.Id };
 		connection.SendMessage( loadedMsg, NetFlags.Reliable );
+
+		if ( Application.IsEditor )
+		{
+			IToolsDll.Current?.SetPlaying();
+		}
 
 		LoadingScreen.IsVisible = false;
 	}
@@ -290,7 +322,7 @@ public partial class SceneNetworkSystem : GameNetworkSystem
 			NetworkObjects = new List<object>( 64 )
 		};
 
-		GetSnapshot( default, ref snapshot );
+		GetSnapshot( connection, ref snapshot );
 		output.Snapshot = snapshot;
 
 		var bs = ByteStream.Create( 256 );
@@ -298,7 +330,6 @@ public partial class SceneNetworkSystem : GameNetworkSystem
 
 		Networking.System.Serialize( output, ref bs );
 		connection.SendStream( bs );
-
 		bs.Dispose();
 	}
 
@@ -395,7 +426,7 @@ public partial class SceneNetworkSystem : GameNetworkSystem
 
 		using ( analytic.ScopeTimer( "NetworkObjectTime" ) )
 		{
-			Game.ActiveScene.SerializeNetworkObjects( msg.NetworkObjects );
+			Game.ActiveScene.SerializeNetworkObjects( source, msg.NetworkObjects );
 		}
 
 		var systems = Game.ActiveScene.GetSystems();
@@ -568,6 +599,10 @@ public partial class SceneNetworkSystem : GameNetworkSystem
 				if ( nwo is not ObjectCreateMsg oc )
 					continue;
 
+				// Fold blobs into the shared scope - Deserialize is deferred to the batch flush,
+				// so a per-object scope would be gone before its blob data (eg. mesh) is read.
+				blobs.Load( oc.BlobData );
+
 				var go = new GameObject();
 				go.Deserialize( JsonNode.Parse( oc.JsonData ).AsObject(), networkDeserializeOptionsCreate );
 				createdNetworkObjects.Add( new( go, oc ) );
@@ -693,7 +728,7 @@ public partial class SceneNetworkSystem : GameNetworkSystem
 
 	public override void OnJoined( Connection client )
 	{
-		Platform.Chat.BroadcastText( $"👋 {client.Name} has joined the game" );
+		Platform.Chat.BroadcastPlayerJoin( client );
 
 		Action queue = default;
 
@@ -730,7 +765,7 @@ public partial class SceneNetworkSystem : GameNetworkSystem
 
 			if ( Networking.IsHost )
 			{
-				Platform.Chat.BroadcastText( $"👋 {client.Name} left the game" );
+				Platform.Chat.BroadcastPlayerLeave( client );
 
 				Action queue = default;
 
@@ -935,6 +970,11 @@ public partial class SceneNetworkSystem : GameNetworkSystem
 			gameObject.SetParentFromNetwork( parentObject );
 		}
 
+		if ( source is not null && !source.IsHost )
+		{
+			gameObject.PreserveFromHostSyncMembers( gameObjectJson );
+		}
+
 		using ( var _ = CallbackBatch.Batch() )
 		using ( BlobDataSerializer.LoadFromMemory( message.BlobData ) )
 		{
@@ -1009,6 +1049,11 @@ public partial class SceneNetworkSystem : GameNetworkSystem
 			return;
 		}
 
+		if ( source is not null && !source.IsHost )
+		{
+			component.PreserveFromHostSyncMembers( componentJson );
+		}
+
 		using ( CallbackBatch.Batch() )
 		using ( BlobDataSerializer.LoadFromMemory( message.BlobData ) )
 		{
@@ -1079,6 +1124,13 @@ public partial class SceneNetworkSystem : GameNetworkSystem
 				if ( source is not null && !source.IsHost && (msg.Owner != source.Id || msg.Creator != source.Id) )
 					continue;
 
+				// Drop a create for an id we already have rather than spawning a duplicate under a reassigned GUID.
+				if ( scene.Directory.FindByGuid( msg.Guid ).IsValid() )
+				{
+					Log.Warning( $"Ignoring batched ObjectCreateMsg for {msg.Guid} from {source}: an object with that id already exists." );
+					continue;
+				}
+
 				using ( BlobDataSerializer.LoadFromMemory( msg.BlobData ) )
 				{
 					var go = new GameObject();
@@ -1106,6 +1158,14 @@ public partial class SceneNetworkSystem : GameNetworkSystem
 		// Don't let clients claim ownership or creation on behalf of other connections
 		if ( source is not null && !source.IsHost && (message.Owner != source.Id || message.Creator != source.Id) )
 			return;
+
+		// We already have an object with this id. Spawning another would create a duplicate and then
+		// silently reassign its GUID, turning a single stray create into an endless duplicate generator.
+		if ( scene.Directory.FindByGuid( message.Guid ).IsValid() )
+		{
+			Log.Warning( $"Ignoring ObjectCreateMsg for {message.Guid} from {source}: an object with that id already exists." );
+			return;
+		}
 
 		var go = new GameObject();
 

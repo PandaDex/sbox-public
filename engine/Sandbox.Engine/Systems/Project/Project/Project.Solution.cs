@@ -101,16 +101,16 @@ public sealed partial class Project
 			{
 				project.AddAspComponentsGlobalUsing();
 				project.AddGameNamespaceGlobalStatic();
-
-				if ( Config.FullIdent != "local.base" && !project.PackageReferences.Contains( "local.base" ) )
-				{
-					project.PackageReferences.Add( "local.base" );
-				}
 			}
 
 			if ( (Config.Type == "game" || Config.Type == "addon") && !IsBuiltIn )
 			{
 				AddLibrariesToProject( project );
+			}
+
+			if ( Config.Type == "addon" )
+			{
+				AddParentPackageReferenceToProject( project );
 			}
 		}
 
@@ -202,11 +202,6 @@ public sealed partial class Project
 		{
 			project.AddAspComponentsGlobalUsing();
 			project.AddGameNamespaceGlobalStatic();
-
-			if ( !project.PackageReferences.Contains( "local.base" ) )
-			{
-				project.PackageReferences.Add( "local.base" );
-			}
 		}
 
 		if ( Config.Type == "game" )
@@ -215,6 +210,36 @@ public sealed partial class Project
 		}
 
 		return project;
+	}
+
+	/// <summary>
+	/// Writes the parent package's assembly to .sbox/bin and adds a project reference for Intellisense.
+	/// </summary>
+	void AddParentPackageReferenceToProject( ProjectInfo project )
+	{
+		var parentPackage = Config.GetMetaOrDefault<string>( "ParentPackage", null );
+
+		if ( string.IsNullOrWhiteSpace( parentPackage ) )
+			return;
+
+		if ( !Package.TryParseIdent( parentPackage, out var parentParts ) )
+			return;
+
+		var parentAp = PackageManager.Find( parentPackage, true, false );
+		if ( parentAp?.AssemblyFileSystem is null )
+			return;
+
+		var dllName = $"package.{parentParts.org}.{parentParts.package}.dll";
+		var found = parentAp.AssemblyFileSystem.FindFile( "/", dllName, true ).FirstOrDefault();
+		if ( found is null )
+			return;
+
+		var bytes = parentAp.AssemblyFileSystem.ReadAllBytes( found ).ToArray();
+		var binDir = System.IO.Path.Combine( GetRootPath(), ".sbox", "bin" );
+		System.IO.Directory.CreateDirectory( binDir );
+		System.IO.File.WriteAllBytes( System.IO.Path.Combine( binDir, dllName ), bytes );
+
+		project.PackageReferences.Add( Path.Combine( binDir, dllName ) );
 	}
 
 	ProjectInfo AddEditorProjectFrom( string projectName, Sandbox.SolutionGenerator.Generator generator )

@@ -2,15 +2,17 @@
 
 namespace Facepunch.Steps;
 
-internal class BuildContent( string name ) : Step( name )
+internal class BuildContent
 {
-	protected override ExitCode RunInternal()
+	internal ExitCode Run()
 	{
 		try
 		{
 			string rootDir = Directory.GetCurrentDirectory();
 			string gameDir = Path.Combine( rootDir, "game" );
-			string contentBuilderPath = Path.Combine( gameDir, "bin", "win64", "contentbuilder.exe" );
+			// contentbuilder is native, so it sits under the platform directory it was built for.
+			string contentBuilderPath = Path.Combine( gameDir, "bin", NativePlatform.Current.DirectoryName,
+				OperatingSystem.IsWindows() ? "contentbuilder.exe" : "contentbuilder" );
 
 			// Verify content builder exists
 			if ( !File.Exists( contentBuilderPath ) )

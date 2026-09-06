@@ -1,4 +1,5 @@
 using System.IO;
+using System.Text.Json.Serialization;
 
 namespace Editor;
 
@@ -10,17 +11,134 @@ public class CreateModelFromMeshDialog : Widget
 {
 	public enum CollisionMode
 	{
+		[Icon( "change_history" ), Title( "Convex Hull" )]
 		Hull,
+		[Icon( "grid_on" ), Title( "Exact Mesh" )]
 		Mesh,
+		[Icon( "block" )]
 		None,
 	}
 
+	public enum ScaleUnit
+	{
+		Inches,
+		Feet,
+		Meters,
+		Centimeters,
+		Millimeters,
+		Custom,
+	}
+
+	/// <summary>
+	/// Import options, remembered between uses. Add a property here to add a setting to the dialog.
+	/// </summary>
+	public class ImportOptions
+	{
+		[Property, Title( "Collision" )]
+		public CollisionMode Collision { get; set; } = CollisionMode.Hull;
+
+		/// <summary>
+		/// Unit presets, derived from <see cref="ImportScale"/> - same conversions ModelDoc uses.
+		/// </summary>
+		[Property, Title( "Units" ), JsonIgnore]
+		public ScaleUnit Units
+		{
+			get => ImportScale switch
+			{
+				1.0f => ScaleUnit.Inches,
+				12.0f => ScaleUnit.Feet,
+				39.37f => ScaleUnit.Meters,
+				0.3937f => ScaleUnit.Centimeters,
+				0.03937f => ScaleUnit.Millimeters,
+				_ => ScaleUnit.Custom,
+			};
+			set => ImportScale = value switch
+			{
+				ScaleUnit.Inches => 1.0f,
+				ScaleUnit.Feet => 12.0f,
+				ScaleUnit.Meters => 39.37f,
+				ScaleUnit.Centimeters => 0.3937f,
+				ScaleUnit.Millimeters => 0.03937f,
+				_ => ImportScale,
+			};
+		}
+
+		[Property, Title( "Import Scale" ), Range( 0.001f, 1000.0f, slider: false )]
+		public float ImportScale { get; set; } = 1.0f;
+
+		/// <summary>
+		/// Add a material group that overrides every material on the model
+		/// </summary>
+		[Property, Title( "Globally Override Materials" )]
+		public bool GlobalMaterialOverride { get; set; } = true;
+
+		/// <summary>
+		/// Material to override every material on the model with. Leave empty to use a default placeholder white material
+		/// </summary>
+		[Property, Title( "Override Material" ), ResourceType( "vmat" )]
+		public string GlobalMaterial { get; set; }
+	}
+
+	internal static void ApplyMaterialOverride( ImportOptions options, CModelDoc document )
+	{
+		if ( !options.GlobalMaterialOverride )
+			return;
+
+		document.AddDefaultMaterialGroup( options.GlobalMaterial );
+	}
+
+	internal class MaterialOverrideRow
+	{
+		readonly Widget _dialog;
+		readonly Widget _row;
+		float _expandedHeight;
+		float _collapsedHeight;
+		bool _visible = true;
+
+		public MaterialOverrideRow( Widget dialog, Widget row )
+		{
+			_dialog = dialog;
+			_row = row;
+		}
+
+		/// <summary>
+		/// Recalculate window height after material override row is shown or hidden
+		/// </summary>
+		public void Measure( bool visible )
+		{
+			_dialog.AdjustSize();
+			_expandedHeight = _dialog.Height;
+
+			_row.Hidden = true;
+			_dialog.AdjustSize();
+			_collapsedHeight = _dialog.Height;
+
+			_visible = visible;
+			_row.Hidden = !visible;
+			_dialog.FixedHeight = visible ? _expandedHeight : _collapsedHeight;
+		}
+
+		public void Update( bool visible )
+		{
+			if ( _visible == visible )
+				return;
+
+			_visible = visible;
+			_row.Hidden = !visible;
+			_dialog.FixedHeight = visible ? _expandedHeight : _collapsedHeight;
+		}
+	}
+
+	const string OptionsCookie = "CreateModelFromMeshDialog.ImportOptions";
+
 	readonly List<Asset> _meshFiles;
-	readonly ComboBox _collisionCombo;
+	readonly ImportOptions _options;
 	readonly LineEdit _fileEdit;
 	readonly FolderEdit _folderEdit;
 	readonly Widget _fileRow;
 	readonly Widget _folderRow;
+	readonly MaterialOverrideRow _materialRow;
+	readonly SerializedObject _serializedOptions;
 
 	public CreateModelFromMeshDialog( List<Asset> meshFiles ) : base( null )
 	{
@@ -52,11 +170,19 @@ public class CreateModelFromMeshDialog : Widget
 
 		Layout.AddSpacingCell( 4 );
 
-		AddRow( "Collision", _collisionCombo = new ComboBox( this ) );
-		_collisionCombo.AddItem( "Convex Hull", icon: "change_history" );
-		_collisionCombo.AddItem( "Exact Mesh", icon: "grid_on" );
-		_collisionCombo.AddItem( "None", icon: "block" );
-		_collisionCombo.CurrentIndex = 0;
+		_options = EditorCookie.Get( OptionsCookie, new ImportOptions() );
+
+		_serializedOptions = _options.GetSerialized();
+
+		foreach ( var prop in _serializedOptions )
+		{
+			var row = AddRow( prop.DisplayName, ControlWidget.Create( prop ) );
+
+			if ( prop.Name == nameof( ImportOptions.GlobalMaterial ) )
+				_materialRow = new MaterialOverrideRow( this, row );
+		}
+
+		_serializedOptions.OnPropertyChanged += _ => _materialRow?.Update( _options.GlobalMaterialOverride );
 
 		var defaultDir = Path.GetDirectoryName( meshFiles[0].AbsolutePath );
 		var defaultFile = Path.ChangeExtension( meshFiles[0].AbsolutePath, ".vmdl" );
@@ -89,8 +215,16 @@ public class CreateModelFromMeshDialog : Widget
 		footer.Add( createButton );
 
 		FixedWidth = 420;
-		AdjustSize();
-		FixedHeight = Height;
+
+		if ( _materialRow is not null )
+		{
+			_materialRow.Measure( _options.GlobalMaterialOverride );
+		}
+		else
+		{
+			AdjustSize();
+			FixedHeight = Height;
+		}
 
 		var geo = EditorCookie.GetString( "CreateModelFromMeshDialog.Geometry", null );
 		if ( geo is not null )
@@ -131,15 +265,10 @@ public class CreateModelFromMeshDialog : Widget
 			_fileEdit.Text = result;
 	}
 
-	CollisionMode SelectedCollision => _collisionCombo.CurrentIndex switch
-	{
-		0 => CollisionMode.Hull,
-		1 => CollisionMode.Mesh,
-		_ => CollisionMode.None,
-	};
-
 	void OnCreate()
 	{
+		EditorCookie.Set( OptionsCookie, _options );
+
 		Close();
 
 		if ( _meshFiles.Count == 1 )
@@ -179,7 +308,14 @@ public class CreateModelFromMeshDialog : Widget
 
 		g_pModelDocUtils.InitFromMesh( document, mesh.Path );
 
-		switch ( SelectedCollision )
+		ApplyMaterialOverride( _options, document );
+
+		if ( _options.ImportScale > 0.0f && !_options.ImportScale.AlmostEqual( 1.0f ) )
+		{
+			document.SetImportScale( _options.ImportScale );
+		}
+
+		switch ( _options.Collision )
 		{
 			case CollisionMode.Hull:
 				document.AddPhysicsHullFromRender();

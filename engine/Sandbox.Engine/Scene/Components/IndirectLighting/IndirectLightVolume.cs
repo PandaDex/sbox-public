@@ -190,10 +190,18 @@ public sealed partial class IndirectLightVolume : Component, Component.ExecuteIn
 	//
 	// Editor Actions
 	//
+	[Expose, Hide]
+	internal bool IsSceneSaved => Scene?.Editor?.GetSceneFolder() is not null;
+
+	[ShowIf( nameof( IsSceneSaved ), false )]
+	[InfoBox( "Save the scene before baking indirect light volumes.", "warning", EditorTint.Yellow )]
+	[Button( "Bake", "lightbulb" ), ReadOnly]
+	public void BakeProbesUnavailableMessage() { }
 
 	/// <summary>
 	/// Starts the probe baking process to capture lighting into the volume textures.
 	/// </summary>
+	[ShowIf( nameof( IsSceneSaved ), true )]
 	[Button( "Bake", "lightbulb" )]
 	public async Task BakeProbes( CancellationToken ct = default )
 	{
@@ -281,19 +289,30 @@ public sealed partial class IndirectLightVolume : Component, Component.ExecuteIn
 	// Gizmos
 	//
 
+	private IDisposable _boundsUndoScope;
+
 	protected override void DrawGizmos()
 	{
+		if ( !Gizmo.Pressed.Any )
+		{
+			_boundsUndoScope?.Dispose();
+			_boundsUndoScope = null;
+		}
+
 		if ( !Gizmo.IsSelected )
 			return;
 
-		var bounds = Bounds;
-		Gizmo.Control.BoundingBox( "Bounds", bounds, out bounds );
-		Gizmo.Draw.LineBBox( bounds );
+		if ( Gizmo.Control.BoundingBox( "Bounds", Bounds, out var newBounds ) )
+		{
+			_boundsUndoScope ??= Scene.Editor?.UndoScope( "Resize Indirect Light Volume" ).WithComponentChanges( this ).Push();
+
+			Bounds = newBounds;
+		}
+
+		Gizmo.Draw.LineBBox( Bounds );
 
 		Gizmo.Draw.Color = new Color( 0.25f, 0.9f, 1, 0.05f );
-		Gizmo.Draw.SolidBox( bounds );
-
-		Bounds = bounds;
+		Gizmo.Draw.SolidBox( Bounds );
 
 		// Use gizmo pooling so it follows gizmo visibility rules (hidden when gizmos disabled, not in cubemaps)
 		var debugGrid = Gizmo.Active.FindOrCreate<LPVDebugGridObject>( "lpv-grid", () => new( Gizmo.World ) );

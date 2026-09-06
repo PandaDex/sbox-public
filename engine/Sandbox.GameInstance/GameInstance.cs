@@ -1,3 +1,4 @@
+using Sandbox.Engine;
 using Sandbox.Internal;
 using Sandbox.Menu;
 using Sandbox.Modals;
@@ -111,6 +112,9 @@ internal class GameInstance : IGameInstance
 
 		GlobalContext.Current.UISystem.Clear();
 
+		// Destroy resource manifests before unmounting their package or network-backed files.
+		Game.Resources.Clear();
+
 		if ( activePackage != null && !Application.IsStandalone )
 		{
 			Game.Language?.Shutdown();
@@ -128,13 +132,23 @@ internal class GameInstance : IGameInstance
 
 		GameInstanceDll.Current.Shutdown( this );
 
-		// If we were running a benchmark, leave the game
-		if ( Application.IsBenchmark )
+		// If we were running a benchmark, load the next package or finish
+		if ( Application.IsBenchmark || BenchmarkOrchestrator.IsRunning )
 		{
-			if ( !Bootstrap.TryLoadNextBenchmarkPackage() )
+			if ( !BenchmarkOrchestrator.TryLoadNextPackage() )
 			{
-				Console.WriteLine( "Quitting" );
-				ConVarSystem.Run( "quit" );
+				if ( BenchmarkOrchestrator.IsRunning )
+				{
+					BenchmarkOrchestrator.IsRunning = false;
+					BenchmarkOrchestrator.RestoreSettings();
+					Game.Overlay.ShowBenchmarkResults( BenchmarkOrchestrator.LastBatchId, BenchmarkOrchestrator.Summaries );
+				}
+				else
+				{
+					BenchmarkOrchestrator.RestoreSettings();
+					Console.WriteLine( "Quitting" );
+					ConVarSystem.Run( "quit" );
+				}
 			}
 		}
 
@@ -253,6 +267,8 @@ internal class GameInstance : IGameInstance
 		if ( !string.IsNullOrWhiteSpace( LaunchArguments.Map ) )
 		{
 			var map = LaunchArguments.Map;
+			Application.Map = map;
+
 			await LoadMapPackage( map, token );
 			Application.MapPackage = _mapPackage;
 		}

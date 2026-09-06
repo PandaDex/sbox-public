@@ -2,7 +2,7 @@
 @inherits Panel
 @using Sandbox;
 @using Sandbox.UI;
-@using Menu;
+@using SboxMenu;
 @using System;
 @using Sandbox.Network
 @using Sandbox.Modals
@@ -55,7 +55,7 @@
             {
 	            @if ( IsDedicatedServerOnly )
 	            {
-					<Button icon="auto_awesome" class="play" Disabled=@(!MenuHelpers.HasAuthority) onclick=@ShowServerList>View Servers</Button>
+					<Button icon="auto_awesome" class="play" Disabled=@(!MenuHelpers.HasAuthority) onclick=@OpenLobbyList>View Servers</Button>
 	            }
 	            else
 	            {
@@ -99,13 +99,6 @@
         {
             MapPackage = await Package.FetchAsync(map, false);
         }
-    }
-
-    private void ShowServerList()
-    {
-        MenuUtility.CloseAllModals();
-
-        MenuSystem.Instance.Url = $"/multiplayer?Package={Package.FullIdent}";
     }
 
     void OnPlay()

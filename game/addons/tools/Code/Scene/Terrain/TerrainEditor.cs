@@ -10,16 +10,16 @@ namespace Editor.TerrainEditor;
 [Icon( "landscape" )]
 [Alias( "terrain" )]
 [Group( "Scene" )]
-public class TerrainEditorTool : EditorTool
+public partial class TerrainEditorTool : EditorTool
 {
 	public override IEnumerable<EditorTool> GetSubtools()
 	{
 		yield return new RaiseLowerTool( this );
-		yield return new PaintTextureTool( this );
-		yield return new FlattenTool( this );
 		yield return new SmoothTool( this );
-		yield return new HoleTool( this );
+		yield return new FlattenTool( this );
 		yield return new NoiseTool( this );
+		yield return new PaintTextureTool( this );
+		yield return new HoleTool( this );
 		// yield return new SetHeightTool();
 	}
 
@@ -28,6 +28,7 @@ public class TerrainEditorTool : EditorTool
 	public BrushSettings BrushSettings { get; private set; } = new();
 
 	BrushPreviewSceneObject _previewObject;
+	public override Widget CreateShortcutsWidget() => new TerrainToolShortcutsWidget();
 
 	public override void OnEnabled()
 	{
@@ -41,6 +42,8 @@ public class TerrainEditorTool : EditorTool
 			var first = Scene.GetAllComponents<Terrain>().FirstOrDefault();
 			if ( first.IsValid() ) Selection.Add( first.GameObject );
 		}
+
+		LoadToolbarCookies();
 	}
 
 	public override void OnDisabled()
@@ -55,7 +58,11 @@ public class TerrainEditorTool : EditorTool
 	public override Widget CreateToolSidebar()
 	{
 		var sidebar = new ToolSidebarWidget();
-		sidebar.AddTitle( "Brush Settings", "brush" );
+
+		var info = CurrentTool is not null ? DisplayInfo.For( CurrentTool ) : default;
+		var title = string.IsNullOrEmpty( info.Name ) ? "Brush Settings" : info.Name;
+		var icon = string.IsNullOrEmpty( info.Icon ) ? "brush" : info.Icon;
+		sidebar.AddTitle( title, icon );
 
 		// Brush Type
 		{
@@ -73,22 +80,34 @@ public class TerrainEditorTool : EditorTool
 
 			opacityRow = ControlSheetRow.Create( so.GetProperty( nameof( BrushSettings.Opacity ) ) );
 			group.Add( opacityRow );
+			var rot = group.Add( ControlSheetRow.Create( so.GetProperty( nameof( BrushSettings.Rotation ) ) ) );
+			rot.Enabled = !BrushSettings.RandomRotation;
+			var rndRot = group.Add( ControlSheetRow.Create( so.GetProperty( nameof( BrushSettings.RandomRotation ) ) ) );
+			group.Add( ControlSheetRow.Create( so.GetProperty( nameof( BrushSettings.ShowGridPreview ) ) ) );
+
+			so.OnPropertyChanged += ( prop ) =>
+			{
+				if ( prop?.Name == nameof( BrushSettings.RandomRotation ) && rot.IsValid() )
+					rot.Enabled = !BrushSettings.RandomRotation;
+			};
 		}
 
 		// Paint-only sections — hidden unless PaintTextureTool is active
-		var paintOnlySection = new PaintOnlySectionWidget( this, opacityRow );
+		var sidebarStretch = new Widget( sidebar ) { VerticalSizeMode = SizeMode.Flexible };
+		var paintOnlySection = new PaintOnlySectionWidget( this, opacityRow, sidebarStretch );
 		{
 			// Material selection
-			var terrain = GetSelectedComponent<Terrain>();
+			var terrain = GetSelectedComponent<Terrain>() ?? Scene.Get<Terrain>();
+
 			if ( terrain.IsValid() )
 			{
 				var group = ToolSidebarWidget.CreateGroupWidget( "Materials", SizeMode.Flexible );
-				paintOnlySection.Layout.Add( group );
+				paintOnlySection.Layout.Add( group, 1 );
 
 				var materialList = new TerrainMaterialList( paintOnlySection, terrain );
 				materialList.ItemSize += 24;
 				materialList.BuildItems();
-				group.ContentLayout.Add( materialList );
+				group.ContentLayout.Add( materialList, 1 );
 
 				var hlayout = group.ContentLayout.AddRow();
 				hlayout.Spacing = 8;
@@ -115,11 +134,18 @@ public class TerrainEditorTool : EditorTool
 				hlayout.Add( newTerrainMat, 1 );
 			}
 
-			sidebar.Layout.Add( paintOnlySection );
+			sidebar.Layout.Add( paintOnlySection, 1 );
+			sidebar.Layout.Add( sidebarStretch, 1 );
 		}
 
-		sidebar.Layout.AddStretchCell();
 		SetOpacityToolTip( opacityRow );
+
+		sidebar.AddShortcuts(
+			("Adjust Size", "Shift+MMB ↔"),
+			("Adjust Opacity", "Shift+MMB ↕"),
+			("Rotate", "CTRL+MMB ↔"),
+			("Switch brush preview", "Capslock")
+			);
 
 		return sidebar;
 	}
@@ -169,8 +195,9 @@ public class TerrainEditorTool : EditorTool
 		_previewObject.Radius = BrushSettings.Size;
 		_previewObject.Texture = Brush.Texture;
 		_previewObject.Color = color;
+		_previewObject.BrushRotation = BrushSettings.Rotation;
 
-		if ( terrain?.Storage is not null )
+		if ( BrushSettings.ShowGridPreview && terrain?.Storage is not null )
 		{
 			var tx = terrain.WorldTransform;
 			_previewObject.CellSize = terrain.Storage.TerrainSize / terrain.Storage.Resolution;
@@ -181,6 +208,64 @@ public class TerrainEditorTool : EditorTool
 		else
 		{
 			_previewObject.CellSize = 0f;
+		}
+	}
+
+	public void DrawSimpleBrushPreview( Vector3 worldPos, Transform tx, Terrain terrain = null )
+	{
+		var color = Color.FromBytes( 150, 150, 250 );
+		if ( Application.KeyboardModifiers.HasFlag( Sandbox.KeyboardModifiers.Ctrl ) )
+			color = color.AdjustHue( 90 );
+
+		if ( terrain?.Storage is not null )
+		{
+			_previewObject ??= new BrushPreviewSceneObject( Gizmo.World );
+			_previewObject.RenderLayer = SceneRenderLayer.OverlayWithDepth;
+			_previewObject.Bounds = BBox.FromPositionAndSize( 0, float.MaxValue );
+			_previewObject.Transform = new Transform( worldPos, tx.Rotation );
+			_previewObject.Radius = BrushSettings.Size;
+			_previewObject.Texture = Brush.Texture;
+			_previewObject.Color = color.WithAlpha( 0 );
+			_previewObject.BrushRotation = BrushSettings.Rotation;
+
+			if ( BrushSettings.ShowGridPreview )
+			{
+				var ttx = terrain.WorldTransform;
+				_previewObject.CellSize = terrain.Storage.TerrainSize / terrain.Storage.Resolution;
+				_previewObject.TerrainOrigin = ttx.Position;
+				_previewObject.TerrainRight = ttx.Rotation.Right;
+				_previewObject.TerrainForward = ttx.Rotation.Forward;
+			}
+			else
+			{
+				_previewObject.CellSize = 0f;
+			}
+		}
+		else if ( _previewObject != null )
+		{
+			_previewObject.Delete();
+			_previewObject = null;
+		}
+
+		var size = BrushSettings.Size;
+		var sections = (int)(MathF.Sqrt( size ) * 5.0f).Clamp( 16, 64 );
+		var length = MathX.LerpTo( 25f * 0.75f, 25f * 2f, BrushSettings.Opacity );
+
+		var rotRad = -BrushSettings.Rotation * MathF.PI / 180f;
+		var tickDir = new Vector3( 0, MathF.Cos( rotRad ), MathF.Sin( rotRad ) );
+
+		using ( Gizmo.Scope( "TerrainSimpleBrush", worldPos, Rotation.LookAt( tx.Rotation.Up ) ) )
+		{
+			Gizmo.Draw.IgnoreDepth = true;
+			Gizmo.Draw.Color = color;
+			Gizmo.Draw.LineThickness = 4;
+			Gizmo.Draw.Line( Vector3.Zero, Vector3.Forward * length );
+			Gizmo.Draw.SolidSphere( Vector3.Forward * length, 2 );
+			Gizmo.Draw.LineCircle( Vector3.Zero, size, 32, sections: sections );
+
+			Gizmo.Draw.LineThickness = 2;
+			Gizmo.Draw.Color = color.WithAlpha( 0.6f );
+			Gizmo.Draw.Line( tickDir * size * 0.7f, tickDir * size );
 		}
 	}
 
@@ -205,13 +290,16 @@ internal class PaintOnlySectionWidget : Widget
 {
 	readonly TerrainEditorTool _tool;
 	readonly ControlSheetRow _opacityRow;
+	readonly Widget _sidebarStretch;
 
-	public PaintOnlySectionWidget( TerrainEditorTool tool, ControlSheetRow opacityRow ) : base( null )
+	public PaintOnlySectionWidget( TerrainEditorTool tool, ControlSheetRow opacityRow, Widget sidebarStretch ) : base( null )
 	{
 		_tool = tool;
 		_opacityRow = opacityRow;
+		_sidebarStretch = sidebarStretch;
 		Layout = Layout.Column();
 		Layout.Spacing = 2;
+		VerticalSizeMode = SizeMode.Flexible;
 	}
 
 	[EditorEvent.Frame]
@@ -219,6 +307,9 @@ internal class PaintOnlySectionWidget : Widget
 	{
 		bool isPaint = _tool.CurrentTool is PaintTextureTool;
 		Hidden = !isPaint;
+
+		if ( _sidebarStretch.IsValid() )
+			_sidebarStretch.Hidden = isPaint;
 
 		if ( !_opacityRow.IsValid() ) return;
 
@@ -493,4 +584,20 @@ internal class TerrainMaterialGridView : ListView
 			SelectItem( material );
 		}
 	}
+}
+
+file class TerrainToolShortcutsWidget : Widget
+{
+	[Shortcut( "tools.terrain.raise-lower", "1", typeof( SceneViewWidget ) )]
+	public void ActivateRaiseLowerTool() => EditorToolManager.SetSubTool( nameof( RaiseLowerTool ) );
+	[Shortcut( "tools.terrain.smooth", "2", typeof( SceneViewWidget ) )]
+	public void ActivateSmoothTool() => EditorToolManager.SetSubTool( nameof( SmoothTool ) );
+	[Shortcut( "tools.terrain.flatten", "3", typeof( SceneViewWidget ) )]
+	public void ActivateFlattenTool() => EditorToolManager.SetSubTool( nameof( FlattenTool ) );
+	[Shortcut( "tools.terrain.noise", "4", typeof( SceneViewWidget ) )]
+	public void ActivateNoiseTool() => EditorToolManager.SetSubTool( nameof( NoiseTool ) );
+	[Shortcut( "tools.terrain.paint-texture", "5", typeof( SceneViewWidget ) )]
+	public void ActivatePaintTextureTool() => EditorToolManager.SetSubTool( nameof( PaintTextureTool ) );
+	[Shortcut( "tools.terrain.hole", "6", typeof( SceneViewWidget ) )]
+	public void ActivateHoleTool() => EditorToolManager.SetSubTool( nameof( HoleTool ) );
 }

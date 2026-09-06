@@ -2,6 +2,7 @@
 using Sandbox.DataModel;
 using Sandbox.Diagnostics;
 using Sandbox.Modals;
+using MenuPanel = MenuProject.UI.MenuPanel;
 
 public static class MenuHelpers
 {
@@ -55,8 +56,8 @@ public static class MenuHelpers
 
 				LaunchArguments.Privacy = x.Privacy;
 
-				if ( !string.IsNullOrEmpty( x.MapIdent ) )
-					MenuUtility.OpenGameWithMap( package.FullIdent, x.MapIdent, x.GameSettings );
+				if ( !string.IsNullOrEmpty( x.Map ) )
+					MenuUtility.OpenGameWithMap( package.FullIdent, x.Map, x.GameSettings );
 				else
 					MenuUtility.OpenGame( package.FullIdent, true, x.GameSettings );
 			} ) );
